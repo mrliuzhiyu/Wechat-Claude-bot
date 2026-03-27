@@ -66,28 +66,47 @@
 
 ---
 
-## Comparación con OpenClaw directo
+## ¿Por qué no usar OpenClaw directamente?
 
-El OpenClaw oficial (ClawBot) de WeChat permite chatear con IA directamente. Este proyecto conecta **Claude Code CLI** encima, trayendo diferencias fundamentales:
+El [OpenClaw](https://github.com/nicepkg/openclaw) oficial de WeChat es un framework para ejecutar modelos de IA localmente y conectarlos a WeChat. Potente, pero con problemas claros:
 
-| Dimensión | OpenClaw directo | Este proyecto (WeChat Claude Code Bot) |
-|-----------|-----------------|----------------------------------------|
-| **Capacidades** | Solo chat de texto | Control total: leer/escribir archivos, ejecutar comandos, buscar código |
-| **Coste de tokens** | Consume tokens API por conversación | Usa Claude Code CLI local, incluido en tu suscripción — sin tokens extra |
-| **Acceso al proyecto** | Sin acceso a archivos locales | Opera directamente sobre tu código real |
-| **Ejecución de comandos** | No soportado | Cualquier comando de terminal (npm, git, docker, etc.) |
-| **Contexto** | Solo texto del chat | Todo el directorio del proyecto como contexto |
-| **Herramientas** | Ninguna | 10+ herramientas: Read, Write, Edit, Bash, Glob, Grep, WebSearch, etc. |
-| **Progreso** | Ninguno | Progreso en tiempo real de cada operación |
-| **Operaciones Git** | No soportado | Commit, push, crear ramas directamente |
-| **Instalar paquetes** | No soportado | `npm install`, `pip install`, etc. |
-| **Multi-turno** | Contexto limitado | Gestión de sesiones independiente con contexto persistente |
+### Problemas de OpenClaw
+
+- **Consumo extremo de tokens** — Llama a la API de Claude directamente, cobrando por token. Conversaciones complejas consumen fácilmente decenas de miles de tokens
+- **Instalación compleja** — Requiere instalar el framework, configurar API Key, ajustar parámetros, resolver conflictos de dependencias
+- **Alto coste de mantenimiento** — Actualizaciones frecuentes, cadenas de dependencias complejas, problemas de compatibilidad
+- **Solo chat** — Incluso configurado, es esencialmente un chatbot de texto, sin control del ordenador
+
+### Ventajas de este proyecto
+
+Este proyecto **no usa el framework OpenClaw**. Conecta directamente el protocolo WeChat iLink Bot + Claude Code CLI local:
+
+| Dimensión | OpenClaw directo | Este proyecto |
+|-----------|-----------------|---------------|
+| **Coste de tokens** | Tokens API por conversación, pay-per-use | **Cero tokens extra**. Usa la cuota de suscripción de Claude Code CLI |
+| **Instalación** | Framework + API Key + dependencias | **3 pasos**: `git clone` → `npm install` → `npm start`, sin API Key |
+| **Mantenimiento** | Actualizaciones frecuentes, conflictos | **Cero mantenimiento**. Solo 2 dependencias ligeras |
+| **Capacidades** | Solo chat de texto | **Control total del PC**: archivos, comandos, Git |
+| **Acceso al proyecto** | Sin acceso al sistema de archivos | Opera directamente sobre código real |
+| **Ejecución** | No soportado | Cualquier comando de terminal |
+| **Contexto** | Solo texto del chat | Todo el directorio del proyecto |
+| **Herramientas** | Ninguna | 10+ herramientas integradas |
+| **Progreso** | Ninguno | Tiempo real por cada operación |
+| **Medios** | Limitado | Imágenes/archivos/videos + `/send` |
+| **Modelos** | Cambiar config + reiniciar | `/model` para cambiar al instante |
+| **Código** | Framework masivo | **3 archivos** principales |
 
 ### En una frase
 
-> **OpenClaw directo** = Chatear con IA en WeChat
+> **OpenClaw** = Framework pesado + API de pago + solo chat
 >
-> **Este proyecto** = Controlar remotamente un programador IA que lee/escribe código, ejecuta comandos y gestiona proyectos
+> **Este proyecto** = 3 archivos + coste cero extra + programador IA remoto
+
+### ¿Cuándo usar qué?
+
+- Si **solo necesitas chatear** con IA en WeChat → OpenClaw funciona (pero pagarás tokens)
+- Si **quieres controlar tu PC, modificar código, ejecutar comandos** desde WeChat → este proyecto
+- Si **ya tienes suscripción a Claude Code** → control remoto por WeChat sin coste adicional
 
 ---
 

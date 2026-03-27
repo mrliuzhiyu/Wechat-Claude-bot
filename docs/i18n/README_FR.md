@@ -66,28 +66,47 @@
 
 ---
 
-## Comparaison avec OpenClaw direct
+## Pourquoi ne pas utiliser OpenClaw directement ?
 
-L'OpenClaw officiel (ClawBot) de WeChat permet de discuter avec une IA dans WeChat. Ce projet connecte **Claude Code CLI** par-dessus, apportant des différences fondamentales :
+[OpenClaw](https://github.com/nicepkg/openclaw) officiel de WeChat est un framework pour exécuter des modèles IA localement. Puissant, mais avec des problèmes clairs :
 
-| Dimension | OpenClaw direct | Ce projet (WeChat Claude Code Bot) |
-|-----------|----------------|-------------------------------------|
-| **Capacités** | Chat texte uniquement | Contrôle total : lecture/écriture de fichiers, exécution de commandes |
-| **Coût en tokens** | Consomme des tokens API par conversation | Utilise Claude Code CLI local, inclus dans l'abonnement — sans tokens supplémentaires |
-| **Accès projet** | Pas d'accès aux fichiers locaux | Opère directement sur votre vrai code |
-| **Exécution de commandes** | Non supporté | Toute commande terminal (npm, git, docker, etc.) |
-| **Contexte** | Texte du chat uniquement | Tout le répertoire projet comme contexte |
-| **Outils** | Aucun | 10+ outils intégrés : Read, Write, Edit, Bash, Glob, Grep, WebSearch, etc. |
-| **Progression** | Aucune | Progression en temps réel de chaque opération |
-| **Opérations Git** | Non supporté | Commit, push, créer des branches directement |
-| **Installation de paquets** | Non supporté | `npm install`, `pip install`, etc. |
-| **Multi-tours** | Contexte limité | Gestion de sessions indépendante avec contexte persistant |
+### Problèmes d'OpenClaw
+
+- **Consommation massive de tokens** — Appelle l'API Claude directement, facturation par token. Les conversations complexes consomment facilement des dizaines de milliers de tokens
+- **Installation complexe** — Framework + clé API + paramètres + résolution de conflits de dépendances
+- **Maintenance coûteuse** — Mises à jour fréquentes, chaînes de dépendances complexes, problèmes de compatibilité
+- **Chat uniquement** — Même configuré, c'est un chatbot texte, sans contrôle de l'ordinateur
+
+### Avantages de ce projet
+
+Ce projet **n'utilise pas le framework OpenClaw**. Il connecte directement le protocole WeChat iLink Bot + Claude Code CLI local :
+
+| Dimension | OpenClaw direct | Ce projet |
+|-----------|----------------|-----------|
+| **Coût tokens** | Tokens API par conversation | **Zéro token supplémentaire**. Quota d'abonnement Claude Code CLI |
+| **Installation** | Framework + clé API + dépendances | **3 étapes** : `git clone` → `npm install` → `npm start` |
+| **Maintenance** | Mises à jour fréquentes, conflits | **Zéro maintenance**. 2 dépendances légères |
+| **Capacités** | Chat texte uniquement | **Contrôle total du PC** : fichiers, commandes, Git |
+| **Accès projet** | Pas d'accès au système de fichiers | Opère sur le vrai code du projet |
+| **Commandes** | Non supporté | Toute commande terminal |
+| **Contexte** | Texte du chat uniquement | Tout le répertoire projet |
+| **Outils** | Aucun | 10+ outils intégrés |
+| **Progression** | Aucune | Temps réel par opération |
+| **Médias** | Limité | Images/fichiers/vidéos + `/send` |
+| **Modèles** | Changer config + redémarrer | `/model` pour changer instantanément |
+| **Code** | Framework massif | **3 fichiers** principaux |
 
 ### En une phrase
 
-> **OpenClaw direct** = Discuter avec une IA dans WeChat
+> **OpenClaw** = Framework lourd + API payante + chat uniquement
 >
-> **Ce projet** = Contrôler à distance un programmeur IA qui lit/écrit du code, exécute des commandes et gère vos projets
+> **Ce projet** = 3 fichiers + zéro coût supplémentaire + programmeur IA à distance
+
+### Quand utiliser quoi ?
+
+- Si vous **voulez juste discuter** avec une IA dans WeChat → OpenClaw fonctionne (mais les tokens coûtent)
+- Si vous **voulez contrôler votre PC, modifier du code, exécuter des commandes** via WeChat → ce projet
+- Si vous **avez déjà un abonnement Claude Code** → contrôle distant par WeChat sans coût supplémentaire
 
 ---
 

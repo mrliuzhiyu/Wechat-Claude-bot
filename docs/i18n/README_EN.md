@@ -66,28 +66,47 @@
 
 ---
 
-## Comparison with Direct OpenClaw
+## Why Not Use OpenClaw Directly?
 
-WeChat's official OpenClaw (ClawBot) allows direct AI chat in WeChat. This project connects **Claude Code CLI** on top of that, bringing fundamental differences:
+WeChat's official [OpenClaw](https://github.com/nicepkg/openclaw) is a framework that runs AI models locally and connects to WeChat via the ClawBot protocol. While powerful, it has clear pain points:
+
+### OpenClaw's Problems
+
+- **Extremely Token-Hungry** — OpenClaw calls the Claude API directly for every conversation, billed per token. Complex conversations easily consume tens of thousands of tokens, with costs spiraling out of control
+- **Complex Installation** — Requires installing the OpenClaw framework, configuring API keys, setting model parameters, and resolving dependency conflicts. High barrier for non-technical users
+- **High Maintenance** — Frequent framework updates, complex dependency chains prone to breaking, version compatibility issues. Local model execution also requires GPU/memory resources
+- **Chat Only** — Even when fully configured, OpenClaw is essentially a chatbot — text conversations only, unable to operate your computer or project files
+
+### Advantages of This Project
+
+This project **does not use the OpenClaw framework**. Instead, it directly interfaces with the WeChat iLink Bot protocol + local Claude Code CLI, fundamentally solving the above issues:
 
 | Dimension | Direct OpenClaw | This Project (WeChat Claude Code Bot) |
 |-----------|----------------|---------------------------------------|
-| **Capabilities** | Text chat only | Full computer control: read/write files, run commands, search code |
-| **Token Cost** | Consumes API tokens per conversation, pay-per-use | Uses local Claude Code CLI, included in your subscription — no extra API tokens |
-| **Project Access** | Cannot access local files | Directly operates on your real project code, changes take effect immediately |
-| **Command Execution** | Not supported | Run any terminal command (npm, git, docker, etc.) |
-| **Context** | Chat text only | Entire project directory as context, Claude understands the full codebase |
-| **Tool Calls** | None | 10+ built-in tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, etc. |
+| **Token Cost** | API tokens consumed per conversation, pay-per-use, costs unpredictable | **Zero extra token cost**. Uses Claude Code CLI's included subscription quota, no API calls |
+| **Installation** | Install OpenClaw framework + configure API Key + resolve dependencies | **3-step install**: `git clone` → `npm install` → `npm start`, no API Key needed |
+| **Maintenance** | Frequent updates, dependency conflicts, version issues | **Zero maintenance**. Only 2 lightweight deps (dotenv + qrcode-terminal) |
+| **Capabilities** | Text chat only | **Full computer control**: read/write files, run commands, search code, Git operations |
+| **Project Access** | Cannot access local filesystem | Directly operates on real project code, changes take effect immediately |
+| **Command Execution** | Not supported | Any terminal command (npm, git, docker, python, etc.) |
+| **Context** | Current chat text only | Entire project directory as context, Claude understands the full codebase |
+| **Tool Calls** | No built-in tools | 10+ built-in tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, etc. |
 | **Progress Feedback** | None | Real-time progress updates for every operation |
-| **Git Operations** | Not supported | Commit, push, create branches directly |
-| **Install Packages** | Not supported | Run `npm install`, `pip install`, etc. |
-| **Multi-turn** | Limited context | Independent session management with persistent conversation context |
+| **Media Support** | Limited | Receive images/files/videos, Claude Code can analyze; `/send` to return files |
+| **Model Switching** | Requires config change + restart | `/model` command to instantly switch Sonnet / Opus / Haiku |
+| **Codebase Size** | Massive framework, thousands of files | **3 core files** (index.js + weixin-api.js + claude-code.js), simple and transparent |
 
 ### In One Sentence
 
-> **Direct OpenClaw** = Chat with AI in WeChat
+> **OpenClaw** = Heavy framework + pay-per-token API + chat only
 >
-> **This Project** = Remote control an AI programmer in WeChat that can read/write code, run commands, and manage your projects
+> **This Project** = 3 files + zero extra cost + remote control an AI programmer
+
+### When to Use What
+
+- If you **only need to chat with AI in WeChat**, OpenClaw works (but you'll pay for tokens)
+- If you **want to remotely control your computer, modify code, run commands, and manage projects via WeChat**, this project is the better choice
+- If you **already have a Claude Code subscription**, this project gives you WeChat remote control at zero additional cost
 
 ---
 
