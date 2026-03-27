@@ -50,8 +50,9 @@
 - **Indicador de escritura** — Muestra estado "escribiendo" en WeChat durante el procesamiento
 - **División inteligente de mensajes** — Respuestas largas divididas en los límites de bloques de código con números de secuencia
 - **Conversión Markdown** — Conversión automática de Markdown a texto compatible con WeChat
+- **Imágenes/archivos/videos** — Recibe imágenes, archivos y videos de WeChat, descarga automática y análisis por Claude Code; `/send` para enviar archivos locales
 - **Mensajes de voz** — Soporte de voz-a-texto de WeChat, envía comandos por voz
-- **Comandos slash** — `/new` reiniciar conversación, `/status` ver estado, `/help` ayuda
+- **Comandos slash** — `/new` reiniciar, `/model` cambiar modelo, `/send` enviar archivo, `/status` estado
 
 ### Estabilidad y seguridad
 
@@ -313,6 +314,8 @@ Bot: [muestra logs...]
 |---------|-------------|
 | `/help` | Mostrar información de ayuda |
 | `/new` | Reiniciar conversación, iniciar nueva sesión |
+| `/model` | Cambiar modelo (sonnet / opus / haiku) |
+| `/send <ruta>` | Enviar archivo local a WeChat (imágenes, archivos, etc.) |
 | `/status` | Ver estado del Bot (versión, tiempo activo, directorio de trabajo) |
 
 > Todos los mensajes excepto los comandos slash se envían a Claude Code para su procesamiento.
@@ -326,6 +329,7 @@ Wechat-Claude-bot/
 ├── index.js          # Entrada principal: enrutamiento de mensajes, comandos slash, conversión Markdown
 ├── weixin-api.js     # Wrapper de WeChat iLink Bot API: login, mensajería, indicador de escritura
 ├── claude-code.js    # Interacción con Claude Code CLI: gestión de sesiones, parsing de streams, callbacks de progreso
+├── media.js          # Medios: carga/descarga CDN, cifrado AES-128-ECB
 ├── package.json
 ├── .env.example      # Ejemplo de variables de entorno
 ├── .gitignore
@@ -367,7 +371,7 @@ El timeout predeterminado es de 5 minutos por solicitud. Para tareas complejas, 
 
 ### P: ¿Soporta imágenes/archivos?
 
-Actualmente solo se soportan mensajes de texto y voz (con conversión a texto activada). Las imágenes, videos y archivos aún no están soportados.
+Sí. El Bot puede recibir imágenes, archivos y videos de WeChat, descargándolos automáticamente para que Claude Code los analice. También puedes usar `/send <ruta>` para enviar archivos locales a WeChat. Los mensajes de voz requieren la conversión voz-a-texto de WeChat.
 
 ### P: ¿Qué tan seguro es?
 

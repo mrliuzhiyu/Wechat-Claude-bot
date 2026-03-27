@@ -50,8 +50,9 @@
 - **Typing Indicator** — Shows "typing" status in WeChat while processing, so you know the Bot is working
 - **Smart Message Splitting** — Long replies are intelligently split at code block boundaries with sequence numbers
 - **Markdown Conversion** — Automatically converts Claude's Markdown output to WeChat-friendly plain text
+- **Image/File/Video Support** — Receive images, files, and videos from WeChat, auto-download and send to Claude Code for analysis; use `/send` to send local files back
 - **Voice Message Support** — Supports WeChat voice-to-text, send commands by voice
-- **Slash Commands** — `/new` to reset conversation, `/status` to check status, `/help` for help
+- **Slash Commands** — `/new` reset conversation, `/model` switch models, `/send` send files, `/status` check status
 
 ### Stability & Security
 
@@ -313,6 +314,8 @@ Bot: [shows logs...]
 |---------|-------------|
 | `/help` | Show help information |
 | `/new` | Reset conversation, start a new session |
+| `/model` | Switch model (sonnet / opus / haiku) |
+| `/send <path>` | Send a local file to WeChat (images, files, etc.) |
 | `/status` | View Bot status (version, uptime, working directory) |
 
 > All messages except slash commands are sent to Claude Code for processing.
@@ -326,6 +329,7 @@ Wechat-Claude-bot/
 ├── index.js          # Main entry: message routing, slash commands, Markdown conversion
 ├── weixin-api.js     # WeChat iLink Bot API wrapper: login, messaging, typing indicator
 ├── claude-code.js    # Claude Code CLI interaction: session management, stream parsing, progress callbacks
+├── media.js          # Media send/receive: CDN upload/download, AES-128-ECB encryption
 ├── package.json
 ├── .env.example      # Environment variable example
 ├── .gitignore
@@ -367,7 +371,7 @@ The default timeout is 5 minutes per request. For complex tasks, break them into
 
 ### Q: Does it support images/files?
 
-Currently only text messages and voice messages (with voice-to-text enabled) are supported. Images, videos, and files are not yet supported.
+Yes. The Bot can receive images, files, and videos from WeChat, automatically downloading them locally for Claude Code to analyze. You can also use `/send <file-path>` to send local files back to WeChat. Voice messages require WeChat's voice-to-text feature.
 
 ### Q: How secure is it?
 
