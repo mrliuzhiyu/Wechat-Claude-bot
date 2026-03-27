@@ -8,8 +8,11 @@
  */
 
 import dotenv from 'dotenv';
+import fs from 'node:fs';
+import path from 'node:path';
 import * as weixin from './weixin-api.js';
 import * as claude from './claude-code.js';
+import * as media from './media.js';
 
 dotenv.config();
 
@@ -26,7 +29,8 @@ const MODELS = {
   haiku:  { id: 'claude-haiku-4-5',  label: 'Haiku',  desc: '最快' },
 };
 
-let defaultModel = 'sonnet'; // 默认 sonnet，无需询问
+let defaultModel = 'sonnet';
+let currentAccount = null; // 当前微信连接，供 /send 等命令使用
 const userModels = new Map(); // 每用户可独立切换
 
 function getUserModel(userId) {
@@ -67,12 +71,37 @@ const COMMANDS = {
       return `✅ 切换到 ${MODELS[target].label}，对话已重置。`;
     },
   },
+  '/send': {
+    handler: async (userId, args) => {
+      const filePath = args.trim();
+      if (!filePath) return '用法: /send <文件路径>\n例如: /send C:\\project\\output.png';
+      if (!fs.existsSync(filePath)) return `❌ 文件不存在: ${filePath}`;
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) return '❌ 不能发送文件夹';
+      if (stat.size > 50 * 1024 * 1024) return `❌ 文件过大 (${(stat.size / 1024 / 1024).toFixed(1)}MB)，上限 50MB`;
+      if (stat.size === 0) return '❌ 文件为空';
+
+      try {
+        const account = currentAccount;
+        if (!account) return '❌ 未连接微信';
+        const ctx = ctxTokens.get(userId);
+        const uploaded = await media.uploadMedia(filePath, userId, account.token, account.baseUrl || 'https://ilinkai.weixin.qq.com');
+        const item = media.buildMediaItem(uploaded);
+        await weixin.sendMediaMessage(account.token, userId, item, ctx);
+        return `✅ 已发送: ${path.basename(filePath)}`;
+      } catch (err) {
+        return `❌ 发送失败: ${err.message.slice(0, 150)}`;
+      }
+    },
+  },
   '/help': {
     handler: async (userId) => [
       '/new — 重置对话',
       '/model — 切换模型 (sonnet/opus/haiku)',
+      '/send <路径> — 发送本机文件到微信',
       '/status — 查看状态',
       '',
+      '支持接收: 文字、语音、图片、文件',
       `模型: ${MODELS[getUserModel(userId)].label}`,
       `目录: ${CWD}`,
     ].join('\n'),
@@ -160,16 +189,17 @@ async function handleMessage(account, msg) {
     return;
   }
 
-  // 静默排队，不发任何提示消息打扰用户
   userBusy.add(from);
 
-  // typing（并行，不阻塞主流程）
+  // typing：用共享变量追踪 interval，确保一定能清理
+  let typingIv = null;
+  let typingStopped = false;
+  const stopTyping = () => { typingStopped = true; if (typingIv) { clearInterval(typingIv); typingIv = null; } };
+
   weixin.getConfig(account.token, from, contextToken).then(cfg => {
-    if (!cfg.typingTicket) return;
+    if (typingStopped || !cfg.typingTicket) return;
     weixin.sendTyping(account.token, from, cfg.typingTicket);
-    const iv = setInterval(() => weixin.sendTyping(account.token, from, cfg.typingTicket), 5000);
-    // 存到 msg 上以便后面清理
-    msg._typingInterval = iv;
+    typingIv = setInterval(() => weixin.sendTyping(account.token, from, cfg.typingTicket), 5000);
   }).catch(() => {});
 
   try {
@@ -185,15 +215,13 @@ async function handleMessage(account, msg) {
       },
     });
 
-    if (msg._typingInterval) clearInterval(msg._typingInterval);
-
-    const wx = md2wx(reply);
-    for (const chunk of splitMsg(wx, MAX_REPLY_LENGTH)) {
+    stopTyping();
+    for (const chunk of splitMsg(md2wx(reply), MAX_REPLY_LENGTH)) {
       await send(account.token, from, chunk);
     }
     log(`🤖 ${sid(from)}: ${trunc(reply)} (${reply.length}字)`);
   } catch (err) {
-    if (msg._typingInterval) clearInterval(msg._typingInterval);
+    stopTyping();
     const e = err.message;
     const errMsg = e.includes('超时') ? '⏱️ 超时了，试试拆分成更小的步骤。'
       : e.includes('无法启动') ? '❌ Claude Code 未运行。'
@@ -201,15 +229,95 @@ async function handleMessage(account, msg) {
     await send(account.token, from, errMsg);
     log(`❌ ${sid(from)}: ${e}`);
   } finally {
+    stopTyping(); // 兜底：无论如何都清理
     userBusy.delete(from);
     lastProgress.delete(from);
   }
 }
 
-async function handleUnsupported(account, msg) {
+async function handleMediaMessage(account, msg) {
   if (msg.contextToken) ctxTokens.set(msg.from, msg.contextToken);
-  const labels = { image: '图片', voice_no_text: '语音', video: '视频', file: '文件' };
-  await send(account.token, msg.from, `📎 暂不支持${labels[msg.type] || '此消息'}，请发文字。`);
+  const { from, type } = msg;
+
+  if (type === 'voice_no_text') {
+    await send(account.token, from, '📎 语音未转文字，请开启微信语音转文字后重试。');
+    return;
+  }
+
+  // 下载媒体到本地
+  let filePath = null;
+  let desc = '';
+  try {
+    if (type === 'image' && msg.imageItem) {
+      filePath = await media.downloadImage(msg.imageItem);
+      desc = '图片';
+    } else if (type === 'file' && msg.fileItem) {
+      const r = await media.downloadFile(msg.fileItem);
+      if (r) { filePath = r.filePath; desc = `文件 ${r.originalName}`; }
+    } else if (type === 'video' && msg.videoItem) {
+      filePath = await media.downloadVideo(msg.videoItem);
+      desc = '视频';
+    }
+  } catch (err) {
+    log(`⚠️ 媒体下载失败: ${err.message}`);
+    await send(account.token, from, `⚠️ 下载失败: ${err.message.slice(0, 100)}`);
+    return;
+  }
+
+  if (!filePath) {
+    await send(account.token, from, '📎 无法处理此媒体，请发文字。');
+    return;
+  }
+
+  log(`📎 ${sid(from)}: 收到${desc} → ${filePath}`);
+
+  // 视频：Claude Code 无法分析视频内容，只告知保存路径
+  if (type === 'video') {
+    await send(account.token, from, `📹 视频已保存到: ${filePath}\n(视频内容无法直接分析，如需处理请用 /send 发回或告诉我你想做什么)`);
+    return;
+  }
+
+  // 图片/文件：传给 Claude Code 分析
+  userBusy.add(from);
+
+  // typing
+  let typingIv = null;
+  let typingStopped = false;
+  const stopTyping = () => { typingStopped = true; if (typingIv) { clearInterval(typingIv); typingIv = null; } };
+  weixin.getConfig(account.token, from, msg.contextToken).then(cfg => {
+    if (typingStopped || !cfg.typingTicket) return;
+    weixin.sendTyping(account.token, from, cfg.typingTicket);
+    typingIv = setInterval(() => weixin.sendTyping(account.token, from, cfg.typingTicket), 5000);
+  }).catch(() => {});
+
+  try {
+    const prompt = type === 'image'
+      ? `用户发来了一张图片，已保存到: ${filePath}\n请用 Read 工具查看并描述这张图片。`
+      : `用户发来了${desc}，已保存到: ${filePath}\n请读取并分析这个文件的内容。`;
+
+    const reply = await claude.chat(from, prompt, {
+      cwd: CWD,
+      model: getModelId(getUserModel(from)),
+      onProgress: (pt) => {
+        const last = lastProgress.get(from);
+        if (last && last.t === pt && Date.now() - last.ts < 5000) return;
+        lastProgress.set(from, { t: pt, ts: Date.now() });
+        send(account.token, from, pt).catch(() => {});
+      },
+    });
+
+    stopTyping();
+    for (const chunk of splitMsg(md2wx(reply), MAX_REPLY_LENGTH)) {
+      await send(account.token, from, chunk);
+    }
+  } catch (err) {
+    stopTyping();
+    await send(account.token, from, `⚠️ 分析失败: ${err.message.slice(0, 150)}`);
+  } finally {
+    stopTyping();
+    userBusy.delete(from);
+    lastProgress.delete(from);
+  }
 }
 
 async function send(token, to, text) {
@@ -229,7 +337,7 @@ async function messageLoop(account) {
       const r = await weixin.getUpdates(account.token);
       errCount = 0;
       for (const m of r.messages) handleMessage(account, m).catch(e => log(`❌ ${e.message}`));
-      for (const m of r.unsupported) handleUnsupported(account, m).catch(() => {});
+      for (const m of r.media) handleMediaMessage(account, m).catch(e => log(`❌ 媒体: ${e.message}`));
     } catch (err) {
       if (stopping) break;
       if (err.message === 'SESSION_EXPIRED') {
@@ -281,6 +389,7 @@ async function main() {
   while (!stopping) {
     try {
       const account = await weixin.login();
+      currentAccount = account;
       console.log('\n📡 监听中... 微信发 /help 查看帮助\n');
       const r = await messageLoop(account);
       if (r === 'RECONNECT') { log('🔄 重连...'); await sleep(3000); continue; }

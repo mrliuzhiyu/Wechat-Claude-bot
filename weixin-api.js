@@ -215,9 +215,9 @@ async function validateToken(token) {
 // ── getUpdates ───────────────────────────────────────────────────────────────
 
 /**
- * 获取新消息，返回 { messages: [...], unsupported: [...] }
+ * 获取新消息，返回 { messages: [...], media: [...] }
  * messages: 文字/语音转文字消息
- * unsupported: 图片/视频/文件等无法处理的消息（用于给用户反馈）
+ * media: 图片/视频/文件/语音等媒体消息
  */
 export async function getUpdates(token) {
   const syncBuf = loadState('sync-buf');
@@ -225,7 +225,7 @@ export async function getUpdates(token) {
     get_updates_buf: syncBuf?.buf || '',
   }, token, LONG_POLL_TIMEOUT_MS);
 
-  if (!resp) return { messages: [], unsupported: [] };
+  if (!resp) return { messages: [], media: [] };
 
   if (resp.errcode === -14 || resp.ret === -14) {
     throw new Error('SESSION_EXPIRED');
@@ -239,7 +239,7 @@ export async function getUpdates(token) {
   }
 
   const messages = [];
-  const unsupported = [];
+  const media = [];
 
   for (const msg of (resp.msgs || [])) {
     const parsed = parseMessage(msg);
@@ -247,12 +247,12 @@ export async function getUpdates(token) {
       if (parsed.type === 'text') {
         messages.push(parsed);
       } else {
-        unsupported.push(parsed);
+        media.push(parsed);
       }
     }
   }
 
-  return { messages, unsupported };
+  return { messages, media };
 }
 
 // 消息类型常量
@@ -288,13 +288,13 @@ function parseMessage(msg) {
         return { ...base, type: 'voice_no_text' };
 
       case MSG_TYPE.IMAGE:
-        return { ...base, type: 'image' };
+        return { ...base, type: 'image', imageItem: item.image_item };
 
       case MSG_TYPE.VIDEO:
-        return { ...base, type: 'video' };
+        return { ...base, type: 'video', videoItem: item.video_item };
 
       case MSG_TYPE.FILE:
-        return { ...base, type: 'file' };
+        return { ...base, type: 'file', fileItem: item.file_item };
     }
   }
 
@@ -304,7 +304,7 @@ function parseMessage(msg) {
 // ── sendMessage ──────────────────────────────────────────────────────────────
 
 export async function sendMessage(token, to, text, contextToken) {
-  const clientId = `wechat-claude-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const clientId = `wcb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await apiPost('ilink/bot/sendmessage', {
     msg: {
       from_user_id: '',
@@ -316,6 +316,33 @@ export async function sendMessage(token, to, text, contextToken) {
       context_token: contextToken || undefined,
     },
   }, token);
+}
+
+/**
+ * 发送媒体消息（图片/文件/视频）
+ * @param {object} mediaItem - 由 media.js buildMediaItem() 生成
+ * @param {string} caption - 可选文字说明
+ */
+export async function sendMediaMessage(token, to, mediaItem, contextToken, caption) {
+  const items = [];
+  if (caption) items.push({ type: 1, text_item: { text: caption } });
+  items.push(mediaItem);
+
+  // 文字和媒体分开发（微信限制）
+  for (const item of items) {
+    const clientId = `wcb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await apiPost('ilink/bot/sendmessage', {
+      msg: {
+        from_user_id: '',
+        to_user_id: to,
+        client_id: clientId,
+        message_type: 2,
+        message_state: 2,
+        item_list: [item],
+        context_token: contextToken || undefined,
+      },
+    }, token);
+  }
 }
 
 // ── sendTyping ───────────────────────────────────────────────────────────────
