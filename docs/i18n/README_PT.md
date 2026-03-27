@@ -22,6 +22,7 @@
 ## Índice
 
 - [Funcionalidades](#funcionalidades)
+- [Comparação com OpenClaw direto](#comparação-com-openclaw-direto)
 - [Conexão WeChat](#conexão-wechat)
 - [Como funciona](#como-funciona)
 - [Início rápido](#início-rápido)
@@ -36,17 +37,56 @@
 
 ## Funcionalidades
 
+### Capacidades principais
+
 - **Controle remoto via WeChat** — Controle seu Claude Code local diretamente por mensagens do WeChat, sem precisar abrir um terminal
 - **Funciona após fechar o WeChat** — Baseado em long polling do servidor, as mensagens ficam na fila mesmo após fechar o app do WeChat. Reabra o WeChat para ver as respostas — o Bot funciona 24/7 sem parar
-- **Progresso em tempo real** — Receba atualizações ao vivo quando Claude Code lê arquivos, escreve código ou executa comandos
-- **Capacidades completas de código** — Claude Code tem permissões totais: leitura/escrita de arquivos, comandos de terminal, busca de código, instalação de pacotes
-- **Isolamento de sessões multiusuário** — Cada usuário do WeChat tem uma sessão independente com contexto contínuo
-- **Suporte a mensagens de voz** — Compatível com mensagens de voz do WeChat (requer conversão voz-para-texto ativada)
-- **Divisão inteligente de mensagens** — Respostas longas são divididas automaticamente nos limites de blocos de código
-- **Conversão Markdown** — Converte automaticamente a saída Markdown do Claude para texto compatível com WeChat
-- **Reconexão automática** — Reautenticação automática quando a sessão expira, persistência de token
-- **Controle de concorrência** — Até 3 tarefas simultâneas, excedentes são enfileiradas automaticamente
-- **Encerramento gracioso** — Suporte a Ctrl+C com limpeza automática de processos filhos
+- **Controle total do computador** — Claude Code pode operar seu computador de verdade: ler/escrever arquivos, executar comandos, buscar código, instalar pacotes, operações Git — não é apenas chat
+- **Opera em projetos reais** — Claude Code roda no diretório do seu projeto local, modifica arquivos de código reais com efeito imediato
+
+### Experiência do usuário
+
+- **Progresso em tempo real** — Atualizações ao vivo no WeChat enquanto Claude Code trabalha (ex: `📖 Lendo arquivo: src/app.js`)
+- **Indicador de digitação** — Mostra status "digitando" no WeChat durante processamento
+- **Divisão inteligente** — Respostas longas divididas nos limites de blocos de código com numeração
+- **Conversão Markdown** — Conversão automática de Markdown para texto compatível com WeChat
+- **Mensagens de voz** — Suporte a voz-para-texto do WeChat, envie comandos por voz
+- **Comandos slash** — `/new` reiniciar, `/status` estado, `/help` ajuda
+
+### Estabilidade e segurança
+
+- **Isolamento de sessões** — Cada usuário tem sessão independente com contexto contínuo
+- **Controle de concorrência** — Até 3 tarefas simultâneas, excedentes em fila sem perda
+- **Reconexão automática** — Reautenticação automática quando sessão expira
+- **Limpeza de sessões** — Sessões inativas limpas após 1h, máximo 100 sessões
+- **Proteção de timeout escalonada** — Lembrete em 2 min, encerramento forçado em 5 min
+- **Encerramento gracioso** — Ctrl+C com limpeza automática de processos filhos
+- **Execução local** — Código e dados nunca passam por servidores de terceiros
+
+---
+
+## Comparação com OpenClaw direto
+
+O OpenClaw oficial (ClawBot) do WeChat permite conversar com IA diretamente. Este projeto conecta **Claude Code CLI** por cima, trazendo diferenças fundamentais:
+
+| Dimensão | OpenClaw direto | Este projeto (WeChat Claude Code Bot) |
+|----------|----------------|---------------------------------------|
+| **Capacidades** | Apenas chat de texto | Controle total: ler/escrever arquivos, executar comandos, buscar código |
+| **Custo de tokens** | Consome tokens API por conversa | Usa Claude Code CLI local, incluído na assinatura — sem tokens extras |
+| **Acesso ao projeto** | Sem acesso a arquivos locais | Opera diretamente no código real do projeto |
+| **Execução de comandos** | Não suportado | Qualquer comando de terminal (npm, git, docker, etc.) |
+| **Contexto** | Apenas texto do chat | Todo o diretório do projeto como contexto |
+| **Ferramentas** | Nenhuma | 10+ ferramentas: Read, Write, Edit, Bash, Glob, Grep, WebSearch, etc. |
+| **Progresso** | Nenhum | Progresso em tempo real de cada operação |
+| **Operações Git** | Não suportado | Commit, push, criar branches diretamente |
+| **Instalar pacotes** | Não suportado | `npm install`, `pip install`, etc. |
+| **Multi-turno** | Contexto limitado | Gerenciamento de sessões independente com contexto persistente |
+
+### Em uma frase
+
+> **OpenClaw direto** = Conversar com IA no WeChat
+>
+> **Este projeto** = Controlar remotamente um programador IA que lê/escreve código, executa comandos e gerencia projetos
 
 ---
 

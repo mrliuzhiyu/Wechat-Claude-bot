@@ -22,6 +22,7 @@
 ## Table of Contents
 
 - [Features](#features)
+- [Comparison with Direct OpenClaw](#comparison-with-direct-openclaw)
 - [WeChat Connection](#wechat-connection)
 - [How It Works](#how-it-works)
 - [Quick Start](#quick-start)
@@ -36,17 +37,56 @@
 
 ## Features
 
+### Core Capabilities
+
 - **Remote Control via WeChat** — Control your local Claude Code directly through WeChat messages, no need to open a terminal
 - **Works After Closing WeChat** — Based on server-side long polling, messages queue even after closing the WeChat app. Reopen WeChat to see replies — the Bot runs 24/7 non-stop
-- **Real-time Progress** — Get live progress updates when Claude Code reads files, writes code, or executes commands
-- **Full Code Capabilities** — Claude Code has full permissions: read/write files, run terminal commands, search code, install packages
-- **Multi-user Session Isolation** — Each WeChat user gets an independent session with continuous conversation context
-- **Voice Message Support** — Supports WeChat voice messages (requires voice-to-text enabled)
-- **Smart Message Splitting** — Long replies are intelligently split at code block boundaries, never cutting code in half
+- **Full Computer Control** — Claude Code can truly operate your computer: read/write any files, execute any terminal commands, search code, install packages, Git operations, and more — not just chat
+- **Operate on Real Projects** — Claude Code runs in your local project directory, directly modifying real code files with changes taking effect immediately
+
+### User Experience
+
+- **Real-time Progress** — Live progress updates pushed to WeChat as Claude Code works (e.g., `📖 Reading file: src/app.js`)
+- **Typing Indicator** — Shows "typing" status in WeChat while processing, so you know the Bot is working
+- **Smart Message Splitting** — Long replies are intelligently split at code block boundaries with sequence numbers
 - **Markdown Conversion** — Automatically converts Claude's Markdown output to WeChat-friendly plain text
+- **Voice Message Support** — Supports WeChat voice-to-text, send commands by voice
+- **Slash Commands** — `/new` to reset conversation, `/status` to check status, `/help` for help
+
+### Stability & Security
+
+- **Multi-user Session Isolation** — Each WeChat user gets an independent session with continuous context
+- **Concurrency Control** — Up to 3 concurrent tasks, excess requests are queued without message loss
 - **Auto Reconnect** — Automatically re-authenticates on session expiration, token persistence avoids repeated QR scanning
-- **Concurrency Control** — Up to 3 concurrent tasks, excess requests are automatically queued
+- **Session Cleanup** — Inactive sessions auto-expire after 1 hour, max 100 sessions retained
+- **Tiered Timeout Protection** — 2-minute inactivity reminder, 5-minute forced termination to prevent stuck tasks
 - **Graceful Shutdown** — Supports Ctrl+C safe exit with automatic child process cleanup
+- **Runs Locally** — Code and data never pass through third-party servers, credential files are owner-only readable
+
+---
+
+## Comparison with Direct OpenClaw
+
+WeChat's official OpenClaw (ClawBot) allows direct AI chat in WeChat. This project connects **Claude Code CLI** on top of that, bringing fundamental differences:
+
+| Dimension | Direct OpenClaw | This Project (WeChat Claude Code Bot) |
+|-----------|----------------|---------------------------------------|
+| **Capabilities** | Text chat only | Full computer control: read/write files, run commands, search code |
+| **Token Cost** | Consumes API tokens per conversation, pay-per-use | Uses local Claude Code CLI, included in your subscription — no extra API tokens |
+| **Project Access** | Cannot access local files | Directly operates on your real project code, changes take effect immediately |
+| **Command Execution** | Not supported | Run any terminal command (npm, git, docker, etc.) |
+| **Context** | Chat text only | Entire project directory as context, Claude understands the full codebase |
+| **Tool Calls** | None | 10+ built-in tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, etc. |
+| **Progress Feedback** | None | Real-time progress updates for every operation |
+| **Git Operations** | Not supported | Commit, push, create branches directly |
+| **Install Packages** | Not supported | Run `npm install`, `pip install`, etc. |
+| **Multi-turn** | Limited context | Independent session management with persistent conversation context |
+
+### In One Sentence
+
+> **Direct OpenClaw** = Chat with AI in WeChat
+>
+> **This Project** = Remote control an AI programmer in WeChat that can read/write code, run commands, and manage your projects
 
 ---
 
