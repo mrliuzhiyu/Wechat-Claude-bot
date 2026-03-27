@@ -1,6 +1,6 @@
 /**
  * 微信 iLink Bot API 封装
- * 协议来源：@tencent-weixin/openclaw-weixin 官方插件逆向
+ * 协议来源：@tencent-weixin/openclaw-weixin 官方插件
  */
 
 import crypto from 'node:crypto';
@@ -51,7 +51,7 @@ async function apiPost(endpoint, body, token, timeoutMs = 15_000) {
     return JSON.parse(text);
   } catch (err) {
     clearTimeout(timer);
-    if (err.name === 'AbortError') return null; // 长轮询超时，正常
+    if (err.name === 'AbortError') return null;
     throw err;
   }
 }
@@ -66,7 +66,6 @@ function saveState(key, data) {
   ensureStateDir();
   const filePath = path.join(STATE_DIR, `${key}.json`);
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-  // 保护凭据文件权限（仅 owner 可读写）
   try { fs.chmodSync(filePath, 0o600); } catch {}
 }
 
@@ -84,7 +83,7 @@ export async function fetchQRCode() {
   const url = `${BASE_URL}/ilink/bot/get_bot_qrcode?bot_type=3`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`获取二维码失败: ${res.status}`);
-  return await res.json(); // { qrcode, qrcode_img_content }
+  return await res.json();
 }
 
 export async function pollQRStatus(qrcode) {
@@ -99,7 +98,7 @@ export async function pollQRStatus(qrcode) {
     clearTimeout(timer);
     const text = await res.text();
     if (!res.ok) throw new Error(`轮询状态失败: ${res.status}`);
-    return JSON.parse(text); // { status, bot_token?, ilink_bot_id?, baseurl?, ilink_user_id? }
+    return JSON.parse(text);
   } catch (err) {
     clearTimeout(timer);
     if (err.name === 'AbortError') return { status: 'wait' };
@@ -108,89 +107,104 @@ export async function pollQRStatus(qrcode) {
 }
 
 /**
- * 完整登录流程：显示二维码 → 等待扫码 → 返回凭据
+ * 完整登录流程：验证 token → 显示二维码 → 等待扫码 → 自动刷新过期二维码
  */
 export async function login() {
-  // 先检查已有 token，并验证有效性
+  // 检查已有 token
   const saved = loadState('account');
   if (saved?.token) {
-    console.log('🔑 发现已保存的登录凭据，验证中...');
+    console.log('🔑 发现已保存的凭据，验证中...');
     const valid = await validateToken(saved.token);
     if (valid) {
       console.log('✅ 凭据有效，恢复连接');
       return saved;
     }
-    console.log('⚠️  凭据已失效，需要重新扫码');
+    console.log('⚠️  凭据已失效，重新扫码');
     clearAuth();
   }
 
   const qrcodeterminal = await import('qrcode-terminal');
+  const MAX_QR_REFRESH = 3;
+  let refreshCount = 0;
 
-  console.log('正在获取登录二维码...');
-  const qr = await fetchQRCode();
-
-  console.log('\n📱 请用微信扫描以下二维码：\n');
-  await new Promise(resolve => {
-    qrcodeterminal.default.generate(qr.qrcode_img_content, { small: true }, (code) => {
-      console.log(code);
-      resolve();
-    });
-  });
-  console.log('如果二维码显示异常，请用浏览器打开：');
-  console.log(qr.qrcode_img_content);
-
-  console.log('\n⏳ 等待扫码...');
-  const deadline = Date.now() + 5 * 60_000;
-  let scannedPrinted = false;
-
-  while (Date.now() < deadline) {
-    const status = await pollQRStatus(qr.qrcode);
-
-    switch (status.status) {
-      case 'wait':
-        break;
-      case 'scaned':
-        if (!scannedPrinted) {
-          console.log('👀 已扫码，请在微信确认...');
-          scannedPrinted = true;
-        }
-        break;
-      case 'confirmed': {
-        if (!status.ilink_bot_id) throw new Error('登录失败：服务器未返回 bot_id');
-        const account = {
-          token: status.bot_token,
-          botId: status.ilink_bot_id,
-          baseUrl: status.baseurl || BASE_URL,
-          userId: status.ilink_user_id,
-        };
-        saveState('account', account);
-        console.log(`✅ 连接成功！Bot ID: ${account.botId}`);
-        return account;
-      }
-      case 'expired':
-        throw new Error('二维码已过期，请重新启动');
-      default:
-        break;
+  while (refreshCount < MAX_QR_REFRESH) {
+    refreshCount++;
+    if (refreshCount > 1) {
+      console.log(`\n🔄 二维码已刷新 (${refreshCount}/${MAX_QR_REFRESH})`);
     }
 
-    await new Promise(r => setTimeout(r, 1000));
+    console.log('正在获取登录二维码...');
+    const qr = await fetchQRCode();
+
+    console.log('\n📱 请用微信扫描以下二维码：\n');
+    await new Promise(resolve => {
+      qrcodeterminal.default.generate(qr.qrcode_img_content, { small: true }, (code) => {
+        console.log(code);
+        resolve();
+      });
+    });
+    console.log('如果二维码显示异常，请用浏览器打开：');
+    console.log(qr.qrcode_img_content);
+
+    console.log('\n⏳ 等待扫码...');
+    const deadline = Date.now() + 3 * 60_000; // 每轮 3 分钟
+    let scannedPrinted = false;
+    let shouldRefresh = false;
+
+    while (Date.now() < deadline) {
+      const status = await pollQRStatus(qr.qrcode);
+
+      switch (status.status) {
+        case 'wait':
+          break;
+        case 'scaned':
+          if (!scannedPrinted) {
+            console.log('👀 已扫码，请在微信确认...');
+            scannedPrinted = true;
+          }
+          break;
+        case 'confirmed': {
+          if (!status.ilink_bot_id) throw new Error('登录失败：服务器未返回 bot_id');
+          const account = {
+            token: status.bot_token,
+            botId: status.ilink_bot_id,
+            baseUrl: status.baseurl || BASE_URL,
+            userId: status.ilink_user_id,
+          };
+          saveState('account', account);
+          console.log(`✅ 连接成功！Bot ID: ${account.botId}`);
+          return account;
+        }
+        case 'expired':
+          console.log('⏳ 二维码已过期');
+          shouldRefresh = true;
+          break;
+        default:
+          break;
+      }
+
+      if (shouldRefresh) break;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    if (!shouldRefresh) {
+      // 超时也刷新
+      console.log('⏳ 等待超时');
+    }
   }
-  throw new Error('登录超时');
+
+  throw new Error(`登录失败：二维码 ${MAX_QR_REFRESH} 次过期，请重试`);
 }
 
 // ── token validation ─────────────────────────────────────────────────────────
 
-/**
- * 验证 token 是否仍然有效
- * 用一次短超时的 getUpdates 探测，如果返回正常（或空消息）则有效
- */
 async function validateToken(token) {
   try {
     const resp = await apiPost('ilink/bot/getupdates', {
       get_updates_buf: '',
     }, token, 10_000);
-    if (!resp) return true; // 超时也算正常（长轮询特性）
-    if (resp.errcode === -14 || resp.ret === -14) return false; // session 过期
+    if (!resp) return true;
+    if (resp.errcode === -14 || resp.ret === -14) return false;
     if (resp.ret && resp.ret !== 0) return false;
     return true;
   } catch {
@@ -200,15 +214,19 @@ async function validateToken(token) {
 
 // ── getUpdates ───────────────────────────────────────────────────────────────
 
+/**
+ * 获取新消息，返回 { messages: [...], unsupported: [...] }
+ * messages: 文字/语音转文字消息
+ * unsupported: 图片/视频/文件等无法处理的消息（用于给用户反馈）
+ */
 export async function getUpdates(token) {
   const syncBuf = loadState('sync-buf');
   const resp = await apiPost('ilink/bot/getupdates', {
     get_updates_buf: syncBuf?.buf || '',
   }, token, LONG_POLL_TIMEOUT_MS);
 
-  if (!resp) return []; // 超时
+  if (!resp) return { messages: [], unsupported: [] };
 
-  // 检查错误
   if (resp.errcode === -14 || resp.ret === -14) {
     throw new Error('SESSION_EXPIRED');
   }
@@ -216,38 +234,71 @@ export async function getUpdates(token) {
     throw new Error(`getUpdates 错误: ret=${resp.ret} errmsg=${resp.errmsg || ''}`);
   }
 
-  // 保存 sync buf
   if (resp.get_updates_buf) {
     saveState('sync-buf', { buf: resp.get_updates_buf });
   }
 
-  return (resp.msgs || []).map(parseMessage).filter(Boolean);
+  const messages = [];
+  const unsupported = [];
+
+  for (const msg of (resp.msgs || [])) {
+    const parsed = parseMessage(msg);
+    if (parsed) {
+      if (parsed.type === 'text') {
+        messages.push(parsed);
+      } else {
+        unsupported.push(parsed);
+      }
+    }
+  }
+
+  return { messages, unsupported };
 }
+
+// 消息类型常量
+const MSG_TYPE = { TEXT: 1, IMAGE: 2, VOICE: 3, FILE: 4, VIDEO: 5 };
 
 function parseMessage(msg) {
   if (!msg.from_user_id || !msg.item_list?.length) return null;
 
-  let text = '';
-  for (const item of msg.item_list) {
-    if (item.type === 1 && item.text_item?.text) {
-      text = item.text_item.text;
-      break;
-    }
-    // 语音转文字
-    if (item.type === 3 && item.voice_item?.text) {
-      text = item.voice_item.text;
-      break;
-    }
-  }
+  // 关键：过滤掉 Bot 自己发的消息，防止无限循环
+  // message_type: 1=USER, 2=BOT
+  if (msg.message_type === 2) return null;
 
-  if (!text) return null;
-
-  return {
+  const base = {
     from: msg.from_user_id,
-    text,
     contextToken: msg.context_token,
     timestamp: msg.create_time_ms,
   };
+
+  for (const item of msg.item_list) {
+    switch (item.type) {
+      case MSG_TYPE.TEXT:
+        if (item.text_item?.text) {
+          return { ...base, type: 'text', text: item.text_item.text };
+        }
+        break;
+
+      case MSG_TYPE.VOICE:
+        // 语音转文字
+        if (item.voice_item?.text) {
+          return { ...base, type: 'text', text: item.voice_item.text };
+        }
+        // 没有转文字的语音
+        return { ...base, type: 'voice_no_text' };
+
+      case MSG_TYPE.IMAGE:
+        return { ...base, type: 'image' };
+
+      case MSG_TYPE.VIDEO:
+        return { ...base, type: 'video' };
+
+      case MSG_TYPE.FILE:
+        return { ...base, type: 'file' };
+    }
+  }
+
+  return null;
 }
 
 // ── sendMessage ──────────────────────────────────────────────────────────────
@@ -259,8 +310,8 @@ export async function sendMessage(token, to, text, contextToken) {
       from_user_id: '',
       to_user_id: to,
       client_id: clientId,
-      message_type: 2, // BOT
-      message_state: 2, // FINISH
+      message_type: 2,
+      message_state: 2,
       item_list: [{ type: 1, text_item: { text } }],
       context_token: contextToken || undefined,
     },
@@ -277,9 +328,7 @@ export async function sendTyping(token, to, typingTicket) {
       typing_ticket: typingTicket,
       status: 1,
     }, token, 5000);
-  } catch {
-    // 忽略 typing 失败
-  }
+  } catch {}
 }
 
 export async function getConfig(token, userId, contextToken) {
@@ -294,7 +343,7 @@ export async function getConfig(token, userId, contextToken) {
   }
 }
 
-// ── 清除登录状态 ─────────────────────────────────────────────────────────────
+// ── 清除状态 ─────────────────────────────────────────────────────────────────
 
 export function clearAuth() {
   try { fs.unlinkSync(path.join(STATE_DIR, 'account.json')); } catch {}

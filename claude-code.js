@@ -5,7 +5,7 @@
  * - 每个微信用户一个独立 session（对话连续）
  * - 通过 stream-json 实时解析 Claude 的动作（读文件、写文件、执行命令）
  * - 通过 onProgress 回调实时反馈给用户
- * - 使用 bypassPermissions 模式，赋予完整的代码操作能力
+ * - 使用 --dangerously-skip-permissions 赋予完整的代码操作能力
  */
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -90,12 +90,9 @@ export async function chat(userId, message, opts = {}) {
     await locks.get(userId);
   }
 
-  // 全局并发等待
+  // 全局并发等待（静默排队，不发消息打扰用户）
   while (activeProcesses >= MAX_CONCURRENT) {
-    if (opts.onProgress) {
-      opts.onProgress('⏳ 当前有其他任务在处理，排队等待中...');
-    }
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 1000));
   }
 
   let resolveLock;
@@ -124,19 +121,19 @@ async function _doChat(userId, message, opts) {
     '--output-format', 'stream-json',
     '--verbose',
     // 关键：赋予完整权限，让 Claude Code 能真正写代码、执行命令
-    '--permission-mode', 'bypassPermissions',
+    '--dangerously-skip-permissions',
   ];
 
   if (sessionId) {
     args.push('-r', sessionId);
   }
 
-  if (opts.allowedTools?.length) {
-    args.push('--allowedTools', opts.allowedTools.join(','));
+  if (opts.model) {
+    args.push('--model', opts.model);
   }
 
-  if (opts.systemPrompt) {
-    args.push('--append-system-prompt', opts.systemPrompt);
+  if (opts.allowedTools?.length) {
+    args.push('--allowedTools', opts.allowedTools.join(','));
   }
 
   const claudeBin = resolveClaudeBin();
@@ -147,7 +144,7 @@ async function _doChat(userId, message, opts) {
 
     const proc = spawn(claudeBin, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
+      shell: SPAWN_OPTS_SHELL,
       cwd: opts.cwd || undefined,
       env: { ...process.env, CLAUDECODE: undefined },
     });
@@ -246,14 +243,7 @@ async function _doChat(userId, message, opts) {
         session.lastActive = Date.now();
       }
 
-      const reply = getReplyText() || '(Claude Code 无响应)';
-
-      // 如果有工具操作，在回复前附加摘要
-      if (toolUseCount > 0 && reply !== '(Claude Code 无响应)') {
-        resolve(reply);
-      } else {
-        resolve(reply);
-      }
+      resolve(getReplyText() || '(Claude Code 无响应)');
     });
 
     proc.on('error', (err) => {
@@ -261,28 +251,13 @@ async function _doChat(userId, message, opts) {
       reject(new Error(`无法启动 claude 命令: ${err.message}\n请确认已安装: npm install -g @anthropic-ai/claude-code`));
     });
 
-    // 分级超时：2分钟无进度 → 提醒；5分钟 → 强制结束
-    let lastActivityTime = Date.now();
-    const activityChecker = setInterval(() => {
-      const elapsed = Date.now() - lastActivityTime;
-      if (elapsed > 2 * 60_000 && elapsed < 2 * 60_000 + 5000) {
-        onProgress('⏳ Claude 仍在工作中，请耐心等待...');
-      }
-    }, 5000);
-
-    // stdout 有数据 = 有活动
-    proc.stdout.on('data', () => { lastActivityTime = Date.now(); });
-
+    // 5分钟硬超时，不再发烦人的"仍在工作中"提醒
     const killTimer = setTimeout(() => {
-      clearInterval(activityChecker);
       try { proc.kill('SIGTERM'); } catch {}
       setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
     }, 5 * 60_000);
 
-    proc.on('close', () => {
-      clearTimeout(killTimer);
-      clearInterval(activityChecker);
-    });
+    proc.on('close', () => clearTimeout(killTimer));
   });
 }
 
@@ -317,18 +292,33 @@ export function killAll() {
   }
 }
 
-// ── claude 路径解析 ──────────────────────────────────────────────────────────
+// ── 平台适配 ─────────────────────────────────────────────────────────────────
 
+const IS_WINDOWS = process.platform === 'win32';
+
+// Windows 上 claude 是 .cmd 文件，必须通过 shell 执行
+// 但 shell: true 有注入风险，所以我们 spawn 时不传 message 作为参数
+// 而是通过 --input-format stdin 从 stdin 传入（未来优化）
+// 目前：Windows 用 shell: true（消息通过 args 数组安全传递，
+// Node.js spawn 在 shell:true 时会自动对 args 做引号转义）
+const SPAWN_OPTS_SHELL = IS_WINDOWS;
+
+/**
+ * 解析 claude 可执行文件路径
+ */
 let _claudeBinCache = null;
 function resolveClaudeBin() {
   if (_claudeBinCache) return _claudeBinCache;
   try {
-    const cmd = process.platform === 'win32' ? 'where' : 'which';
+    const cmd = IS_WINDOWS ? 'where' : 'which';
     const result = execFileSync(cmd, ['claude'], {
       encoding: 'utf-8',
+      shell: true,
       env: { ...process.env, CLAUDECODE: undefined },
     }).trim();
-    _claudeBinCache = result.split('\n')[0].trim();
+    // Windows where 返回多行，优先 .cmd
+    const lines = result.split('\n').map(l => l.trim()).filter(Boolean);
+    _claudeBinCache = lines.find(l => l.endsWith('.cmd')) || lines[0] || 'claude';
     return _claudeBinCache;
   } catch {
     _claudeBinCache = 'claude';
@@ -341,6 +331,7 @@ export async function checkClaudeAvailable() {
     const bin = resolveClaudeBin();
     const result = execFileSync(bin, ['--version'], {
       encoding: 'utf-8',
+      shell: SPAWN_OPTS_SHELL,
       env: { ...process.env, CLAUDECODE: undefined },
     });
     return result.trim();

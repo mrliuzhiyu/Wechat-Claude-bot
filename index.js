@@ -2,9 +2,9 @@
 
 /**
  * 微信 Claude Code Bot
- * 通过微信 iLink Bot API 连接本机 Claude Code CLI
  *
- * 用法：node index.js
+ * 用户在微信中发消息 → 本机 Claude Code 处理 → 实时反馈回微信
+ * Claude Code 拥有完整权限：读写文件、执行命令、搜索代码
  */
 
 import dotenv from 'dotenv';
@@ -16,189 +16,230 @@ dotenv.config();
 // ── 配置 ─────────────────────────────────────────────────────────────────────
 
 const CWD = process.env.CLAUDE_CWD || process.cwd();
-const MAX_REPLY_LENGTH = 4000; // 微信单条消息上限
+const MAX_REPLY_LENGTH = 4000;
+
+// ── 模型管理 ─────────────────────────────────────────────────────────────────
+
+const MODELS = {
+  sonnet: { id: 'claude-sonnet-4-6', label: 'Sonnet', desc: '快速' },
+  opus:   { id: 'claude-opus-4-6',   label: 'Opus',   desc: '最强但慢' },
+  haiku:  { id: 'claude-haiku-4-5',  label: 'Haiku',  desc: '最快' },
+};
+
+let defaultModel = 'sonnet'; // 默认 sonnet，无需询问
+const userModels = new Map(); // 每用户可独立切换
+
+function getUserModel(userId) {
+  return userModels.get(userId) || defaultModel;
+}
+
+function getModelId(shortName) {
+  return MODELS[shortName]?.id || MODELS.sonnet.id;
+}
 
 // ── 斜杠命令 ─────────────────────────────────────────────────────────────────
 
 const COMMANDS = {
   '/new': {
-    desc: '开始新对话',
     handler: async (userId) => {
       claude.clearSession(userId);
-      return '🔄 对话已重置，开始新对话。';
+      return '🔄 对话已重置。';
+    },
+  },
+  '/model': {
+    handler: async (userId, args) => {
+      const target = args.trim().toLowerCase();
+
+      if (!target) {
+        const cur = getUserModel(userId);
+        const lines = [];
+        for (const [k, m] of Object.entries(MODELS)) {
+          lines.push(`  ${k === cur ? '→ ' : '  '}${k} — ${m.label} (${m.desc})`);
+        }
+        return `当前模型: ${MODELS[cur].label}\n\n${lines.join('\n')}\n\n切换: /model sonnet`;
+      }
+
+      if (!MODELS[target]) return `❌ 未知模型: ${target}\n可选: ${Object.keys(MODELS).join(', ')}`;
+      if (target === getUserModel(userId)) return `已经是 ${MODELS[target].label} 了。`;
+
+      userModels.set(userId, target);
+      claude.clearSession(userId);
+      return `✅ 切换到 ${MODELS[target].label}，对话已重置。`;
     },
   },
   '/help': {
-    desc: '显示帮助',
-    handler: async () => {
-      const lines = ['📖 可用命令：', ''];
-      for (const [cmd, { desc }] of Object.entries(COMMANDS)) {
-        lines.push(`  ${cmd} — ${desc}`);
-      }
-      lines.push('', '直接发文字或语音，Claude Code 会帮你处理。');
-      lines.push('Claude Code 可以读写文件、执行命令、搜索代码。');
-      lines.push(`当前工作目录：${CWD}`);
-      return lines.join('\n');
-    },
+    handler: async (userId) => [
+      '/new — 重置对话',
+      '/model — 切换模型 (sonnet/opus/haiku)',
+      '/status — 查看状态',
+      '',
+      `模型: ${MODELS[getUserModel(userId)].label}`,
+      `目录: ${CWD}`,
+    ].join('\n'),
   },
   '/status': {
-    desc: '查看状态',
-    handler: async () => {
-      const version = await claude.checkClaudeAvailable();
+    handler: async (userId) => {
+      const v = await claude.checkClaudeAvailable();
       return [
-        '📊 状态',
-        `Claude Code: ${version || '未检测到'}`,
-        `工作目录: ${CWD}`,
-        `运行时间: ${formatUptime(process.uptime())}`,
+        `Claude Code: ${v || '❌'}`,
+        `模型: ${MODELS[getUserModel(userId)].label}`,
+        `目录: ${CWD}`,
+        `运行: ${fmtUp(process.uptime())}`,
       ].join('\n');
     },
   },
 };
 
-function formatUptime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}小时${m}分钟`;
-  return `${m}分钟`;
+function fmtUp(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h${m}m` : `${m}m`;
+}
+
+// ── Markdown → 微信 ─────────────────────────────────────────────────────────
+
+function md2wx(text) {
+  const blocks = [];
+  let r = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const i = blocks.length;
+    blocks.push(`--- ${lang} ---\n${code.trimEnd()}\n---`);
+    return `\x00CB${i}\x00`;
+  });
+  r = r.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+  r = r.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  r = r.replace(/^\|[\s:|-]+\|$/gm, '');
+  r = r.replace(/^\|(.+)\|$/gm, (_, i) => i.split('|').map(c => c.trim()).join('  '));
+  r = r.replace(/\*\*(.+?)\*\*/g, '$1');
+  r = r.replace(/(?<!\w)\*(.+?)\*(?!\w)/g, '$1');
+  r = r.replace(/^#{1,6}\s+(.+)$/gm, '【$1】');
+  r = r.replace(/`([^`]+)`/g, '$1');
+  r = r.replace(/\x00CB(\d+)\x00/g, (_, i) => blocks[Number(i)]);
+  return r.trim();
+}
+
+// ── 智能拆分 ─────────────────────────────────────────────────────────────────
+
+function splitMsg(text, max) {
+  if (text.length <= max) return [text];
+  const chunks = [];
+  let rest = text;
+  while (rest.length > 0) {
+    if (rest.length <= max) { chunks.push(rest); break; }
+    let at = -1;
+    const cb = rest.lastIndexOf('\n---\n', max); if (cb > max * 0.3) at = cb + 5;
+    if (at < 0) { const e = rest.lastIndexOf('\n\n', max); if (e > max * 0.3) at = e + 1; }
+    if (at < 0) { const n = rest.lastIndexOf('\n', max); if (n > max * 0.3) at = n + 1; }
+    if (at < 0) at = max;
+    chunks.push(rest.slice(0, at));
+    rest = rest.slice(at);
+  }
+  return chunks.length > 1
+    ? chunks.map((c, i) => i === 0 ? c : `(${i + 1}/${chunks.length})\n${c}`)
+    : chunks;
 }
 
 // ── 消息处理 ─────────────────────────────────────────────────────────────────
 
-// 每个用户的最新 contextToken（确保回复用最新的）
-const latestContextTokens = new Map();
+const ctxTokens = new Map();
+const lastProgress = new Map();
+const userBusy = new Set();
 
 async function handleMessage(account, msg) {
   const { from, text, contextToken } = msg;
   const trimmed = text.trim();
+  if (contextToken) ctxTokens.set(from, contextToken);
+  if (!trimmed) return;
 
-  // 更新该用户最新的 contextToken
-  if (contextToken) {
-    latestContextTokens.set(from, contextToken);
-  }
+  log(`👤 ${sid(from)}: ${trunc(trimmed)}`);
 
-  log(`👤 ${from.slice(0, 8)}...: ${trimmed.slice(0, 80)}${trimmed.length > 80 ? '...' : ''}`);
-
-  // 处理斜杠命令
-  const cmdKey = trimmed.toLowerCase().split(' ')[0];
-  if (COMMANDS[cmdKey]) {
-    const reply = await COMMANDS[cmdKey].handler(from);
-    await safeSend(account.token, from, reply);
-    log(`🤖 [命令] ${cmdKey}`);
+  // 斜杠命令
+  const sp = trimmed.indexOf(' ');
+  const cmd = (sp > 0 ? trimmed.slice(0, sp) : trimmed).toLowerCase();
+  const args = sp > 0 ? trimmed.slice(sp + 1) : '';
+  if (COMMANDS[cmd]) {
+    await send(account.token, from, await COMMANDS[cmd].handler(from, args));
     return;
   }
 
-  // 发送 typing 状态
-  const config = await weixin.getConfig(account.token, from, contextToken);
-  const typingInterval = setInterval(() => {
-    weixin.sendTyping(account.token, from, config.typingTicket);
-  }, 5000);
-  weixin.sendTyping(account.token, from, config.typingTicket);
+  // 静默排队，不发任何提示消息打扰用户
+  userBusy.add(from);
+
+  // typing（并行，不阻塞主流程）
+  weixin.getConfig(account.token, from, contextToken).then(cfg => {
+    if (!cfg.typingTicket) return;
+    weixin.sendTyping(account.token, from, cfg.typingTicket);
+    const iv = setInterval(() => weixin.sendTyping(account.token, from, cfg.typingTicket), 5000);
+    // 存到 msg 上以便后面清理
+    msg._typingInterval = iv;
+  }).catch(() => {});
 
   try {
-    log('🤖 正在思考...');
-    const reply = await claude.chat(from, trimmed, { cwd: CWD });
+    const reply = await claude.chat(from, trimmed, {
+      cwd: CWD,
+      model: getModelId(getUserModel(from)),
+      onProgress: (pt) => {
+        const last = lastProgress.get(from);
+        if (last && last.t === pt && Date.now() - last.ts < 5000) return;
+        lastProgress.set(from, { t: pt, ts: Date.now() });
+        send(account.token, from, pt).catch(() => {});
+        log(`  📊 ${pt}`);
+      },
+    });
 
-    clearInterval(typingInterval);
+    if (msg._typingInterval) clearInterval(msg._typingInterval);
 
-    // 检查 Claude Code 是否需要权限确认（关键边界问题）
-    const processedReply = handlePermissionDenials(reply);
-
-    // 拆分长消息
-    const chunks = splitMessage(processedReply, MAX_REPLY_LENGTH);
-    for (const chunk of chunks) {
-      await safeSend(account.token, from, chunk);
+    const wx = md2wx(reply);
+    for (const chunk of splitMsg(wx, MAX_REPLY_LENGTH)) {
+      await send(account.token, from, chunk);
     }
-
-    const preview = processedReply.slice(0, 80).replace(/\n/g, ' ');
-    log(`🤖 Claude: ${preview}${processedReply.length > 80 ? '...' : ''} (${processedReply.length}字)`);
+    log(`🤖 ${sid(from)}: ${trunc(reply)} (${reply.length}字)`);
   } catch (err) {
-    clearInterval(typingInterval);
-    const errMsg = `⚠️ 处理失败: ${err.message.slice(0, 200)}`;
-    await safeSend(account.token, from, errMsg);
-    log(`❌ 错误: ${err.message}`);
+    if (msg._typingInterval) clearInterval(msg._typingInterval);
+    const e = err.message;
+    const errMsg = e.includes('超时') ? '⏱️ 超时了，试试拆分成更小的步骤。'
+      : e.includes('无法启动') ? '❌ Claude Code 未运行。'
+      : `⚠️ ${e.slice(0, 200)}`;
+    await send(account.token, from, errMsg);
+    log(`❌ ${sid(from)}: ${e}`);
+  } finally {
+    userBusy.delete(from);
+    lastProgress.delete(from);
   }
 }
 
-/**
- * 处理 Claude Code 权限拒绝的情况
- * claude -p 在 default 权限模式下，遇到需要确认的操作会被拒绝
- * 返回的文本中会包含 permission denied 相关信息
- */
-function handlePermissionDenials(reply) {
-  if (!reply) return reply;
-  // 如果回复为空或仅包含权限拒绝信息，提示用户
-  if (reply === '(Claude Code 无响应)') {
-    return '⚠️ Claude Code 无法完成此操作。可能是权限不足或操作被拒绝。\n\n提示：可以在启动时设置 CLAUDE_CWD 指定工作目录，或检查 Claude Code 的权限配置。';
-  }
-  return reply;
+async function handleUnsupported(account, msg) {
+  if (msg.contextToken) ctxTokens.set(msg.from, msg.contextToken);
+  const labels = { image: '图片', voice_no_text: '语音', video: '视频', file: '文件' };
+  await send(account.token, msg.from, `📎 暂不支持${labels[msg.type] || '此消息'}，请发文字。`);
 }
 
-/**
- * 安全发送消息，使用最新的 contextToken
- */
-async function safeSend(token, to, text) {
-  const ctx = latestContextTokens.get(to);
+async function send(token, to, text) {
   try {
-    await weixin.sendMessage(token, to, text, ctx);
+    await weixin.sendMessage(token, to, text, ctxTokens.get(to));
   } catch (err) {
-    log(`⚠️ 发送消息失败: ${err.message}`);
-    // 不再抛出，避免因发送失败导致整个处理链断裂
+    log(`⚠️ 发送失败: ${err.message.slice(0, 80)}`);
   }
 }
 
-function splitMessage(text, maxLen) {
-  if (text.length <= maxLen) return [text];
-  const chunks = [];
-  let rest = text;
-  while (rest.length > 0) {
-    if (rest.length <= maxLen) {
-      chunks.push(rest);
-      break;
-    }
-    // 尝试在换行处断开
-    let splitAt = rest.lastIndexOf('\n', maxLen);
-    if (splitAt < maxLen * 0.3) splitAt = maxLen;
-    chunks.push(rest.slice(0, splitAt));
-    rest = rest.slice(splitAt).replace(/^\n/, '');
-  }
-  return chunks;
-}
-
-// ── 消息循环（带自动重连）────────────────────────────────────────────────────
+// ── 消息循环 ─────────────────────────────────────────────────────────────────
 
 async function messageLoop(account) {
-  let consecutiveErrors = 0;
-
-  while (!shuttingDown) {
+  let errCount = 0;
+  while (!stopping) {
     try {
-      const messages = await weixin.getUpdates(account.token);
-      consecutiveErrors = 0;
-
-      for (const msg of messages) {
-        handleMessage(account, msg).catch(err => {
-          log(`❌ 处理消息异常: ${err.message}`);
-        });
-      }
+      const r = await weixin.getUpdates(account.token);
+      errCount = 0;
+      for (const m of r.messages) handleMessage(account, m).catch(e => log(`❌ ${e.message}`));
+      for (const m of r.unsupported) handleUnsupported(account, m).catch(() => {});
     } catch (err) {
-      if (shuttingDown) break;
-
+      if (stopping) break;
       if (err.message === 'SESSION_EXPIRED') {
-        log('⚠️  Session 过期，尝试重新登录...');
+        log('⚠️ Session 过期，重连...');
         weixin.clearAuth();
-        // 自动重连而非退出
         return 'RECONNECT';
       }
-
-      consecutiveErrors++;
-      log(`❌ 轮询错误 (${consecutiveErrors}/5): ${err.message}`);
-
-      if (consecutiveErrors >= 5) {
-        log('❌ 连续错误过多，等待 30 秒...');
-        await sleep(30_000);
-        consecutiveErrors = 0;
-      } else {
-        await sleep(2000);
-      }
+      errCount++;
+      log(`❌ 轮询错误 (${errCount}/5): ${err.message}`);
+      await sleep(errCount >= 5 ? (errCount = 0, 30000) : 2000);
     }
   }
   return 'SHUTDOWN';
@@ -206,80 +247,47 @@ async function messageLoop(account) {
 
 // ── 优雅退出 ─────────────────────────────────────────────────────────────────
 
-let shuttingDown = false;
-
-function setupGracefulShutdown() {
-  const handler = async (signal) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    console.log(`\n🛑 收到 ${signal}，正在退出...`);
-
-    // 杀掉所有 claude 子进程
+let stopping = false;
+function setupShutdown() {
+  const h = async (sig) => {
+    if (stopping) return;
+    stopping = true;
+    console.log(`\n🛑 ${sig}，退出中...`);
     claude.killAll();
-
-    // 给子进程 3 秒优雅退出
     await sleep(1000);
-    console.log('👋 已退出');
     process.exit(0);
   };
-
-  process.on('SIGINT', () => handler('SIGINT'));
-  process.on('SIGTERM', () => handler('SIGTERM'));
-
-  // Windows: 处理终端关闭
-  if (process.platform === 'win32') {
-    process.on('SIGHUP', () => handler('SIGHUP'));
-  }
+  process.on('SIGINT', () => h('SIGINT'));
+  process.on('SIGTERM', () => h('SIGTERM'));
+  if (process.platform === 'win32') process.on('SIGHUP', () => h('SIGHUP'));
 }
 
 // ── 主流程 ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('');
-  console.log('🤖 微信 Claude Code Bot');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('');
+  console.log('\n🤖 微信 Claude Code Bot\n━━━━━━━━━━━━━━━━━━━━━━\n');
+  setupShutdown();
 
-  setupGracefulShutdown();
-
-  // 1. 检查 Claude Code CLI
   const version = await claude.checkClaudeAvailable();
   if (!version) {
-    console.error('❌ 未检测到 claude 命令。');
-    console.error('   请先安装 Claude Code CLI: npm install -g @anthropic-ai/claude-code');
+    console.error('❌ 未检测到 claude。请安装: npm i -g @anthropic-ai/claude-code');
     process.exit(1);
   }
-  console.log(`✅ Claude Code: ${version}`);
-  console.log(`📁 工作目录: ${CWD}`);
-  console.log('');
-  console.log('💡 提示：Claude Code 使用 -p (print) 模式运行。');
-  console.log('   如需更多工具权限，可在 Claude Code 设置中调整 permission mode。');
-  console.log('');
 
-  // 2. 登录循环（支持自动重连）
-  while (!shuttingDown) {
+  console.log(`✅ Claude Code ${version}`);
+  console.log(`📁 ${CWD}`);
+  console.log(`🧠 默认模型: ${MODELS[defaultModel].label} (微信发 /model 切换)\n`);
+
+  while (!stopping) {
     try {
-      // 微信登录（含 token 验证）
       const account = await weixin.login();
-      console.log('');
-      console.log('📡 开始监听微信消息... (Ctrl+C 退出)');
-      console.log('   在微信中发消息给此账号即可与 Claude Code 对话');
-      console.log('   发送 /help 查看可用命令');
-      console.log('');
-
-      // 3. 消息循环
-      const result = await messageLoop(account);
-
-      if (result === 'RECONNECT') {
-        log('🔄 正在重新连接...');
-        await sleep(3000);
-        continue; // 重新登录
-      }
-      break; // SHUTDOWN
+      console.log('\n📡 监听中... 微信发 /help 查看帮助\n');
+      const r = await messageLoop(account);
+      if (r === 'RECONNECT') { log('🔄 重连...'); await sleep(3000); continue; }
+      break;
     } catch (err) {
-      if (shuttingDown) break;
-      log(`❌ 连接失败: ${err.message}`);
-      log('   5 秒后重试...');
+      if (stopping) break;
+      log(`❌ ${err.message}，5秒后重试...`);
       await sleep(5000);
     }
   }
@@ -287,18 +295,9 @@ async function main() {
 
 // ── utils ────────────────────────────────────────────────────────────────────
 
-function log(msg) {
-  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-  console.log(`[${time}] ${msg}`);
-}
+function log(msg) { console.log(`[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${msg}`); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function sid(id) { return id.slice(0, 8) + '..'; }
+function trunc(t) { const s = t.replace(/\n/g, ' ').slice(0, 80); return t.length > 80 ? s + '...' : s; }
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
-// ── 启动 ─────────────────────────────────────────────────────────────────────
-
-main().catch(err => {
-  console.error('❌ 启动失败:', err.message);
-  process.exit(1);
-});
+main().catch(e => { console.error('❌', e.message); process.exit(1); });
