@@ -9,6 +9,8 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ── 状态管理 ─────────────────────────────────────────────────────────────────
 
@@ -116,12 +118,9 @@ async function _doChat(userId, message, opts) {
   const isExpired = session && (now - session.lastActive > SESSION_EXPIRE_MS);
   const sessionId = (!isExpired && session?.sessionId) || null;
 
-  // Windows cmd.exe 会破坏 -p 参数中的中文字符
-  // 解决：消息通过 stdin 管道传入（echo msg | claude -p），绕过 cmd.exe 编码
   const args = [
     '-p',
     '--output-format', 'stream-json',
-    '--verbose',
     // 关键：赋予完整权限，让 Claude Code 能真正写代码、执行命令
     '--dangerously-skip-permissions',
   ];
@@ -138,22 +137,21 @@ async function _doChat(userId, message, opts) {
     args.push('--allowedTools', opts.allowedTools.join(','));
   }
 
-  const claudeBin = resolveClaudeBin();
+  // 消息作为最后一个位置参数
+  args.push(message);
+
+  const { bin, extraArgs, shell } = resolveClaudeSpawn();
   const onProgress = opts.onProgress || (() => {});
 
   return new Promise((resolve, reject) => {
     activeProcesses++;
 
-    const proc = spawn(claudeBin, args, {
+    const proc = spawn(bin, [...extraArgs, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: SPAWN_OPTS_SHELL,
+      shell,
       cwd: opts.cwd || undefined,
       env: { ...process.env, CLAUDECODE: undefined },
     });
-
-    // 通过 stdin 传入用户消息，绕过 Windows cmd.exe 编码破坏
-    proc.stdin.write(message);
-    proc.stdin.end();
 
     activeChildren.add(proc);
 
@@ -302,42 +300,63 @@ export function killAll() {
 
 const IS_WINDOWS = process.platform === 'win32';
 
-// Windows 上 claude 是 .cmd 文件，必须通过 shell 执行
-// 但 shell: true 有注入风险，所以我们 spawn 时不传 message 作为参数
-// 而是通过 --input-format stdin 从 stdin 传入（未来优化）
-// 目前：Windows 用 shell: true（消息通过 args 数组安全传递，
-// Node.js spawn 在 shell:true 时会自动对 args 做引号转义）
-const SPAWN_OPTS_SHELL = IS_WINDOWS;
-
 /**
- * 解析 claude 可执行文件路径
+ * 解析 Claude Code 的启动方式
+ *
+ * Windows 上 claude 是 .cmd 文件，通过 cmd.exe 执行会破坏中文参数编码。
+ * 解决方案：找到 cli.js 入口，直接用 node 调用，完全绕过 cmd.exe。
+ *
+ * 返回 { bin, extraArgs, shell }：
+ *   Windows: { bin: 'node', extraArgs: ['/.../cli.js'], shell: false }
+ *   其他:    { bin: 'claude', extraArgs: [],              shell: false }
  */
-let _claudeBinCache = null;
-function resolveClaudeBin() {
-  if (_claudeBinCache) return _claudeBinCache;
+let _spawnCache = null;
+function resolveClaudeSpawn() {
+  if (_spawnCache) return _spawnCache;
+
+  if (IS_WINDOWS) {
+    try {
+      // 找到 claude.cmd 路径
+      const result = execFileSync('where', ['claude'], {
+        encoding: 'utf-8',
+        shell: true,
+        env: { ...process.env, CLAUDECODE: undefined },
+      }).trim();
+      const cmdPath = result.split('\n').map(l => l.trim()).find(l => l.endsWith('.cmd'));
+      if (cmdPath) {
+        // claude.cmd 和 node_modules 在同一目录
+        const dir = path.dirname(cmdPath);
+        const cliJs = path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+        if (fs.existsSync(cliJs)) {
+          _spawnCache = { bin: process.execPath, extraArgs: [cliJs], shell: false };
+          return _spawnCache;
+        }
+      }
+    } catch {}
+    // 兜底：仍用 cmd.exe（可能中文有问题，但至少能跑）
+    _spawnCache = { bin: 'claude', extraArgs: [], shell: true };
+    return _spawnCache;
+  }
+
+  // macOS / Linux：直接用 claude 命令
   try {
-    const cmd = IS_WINDOWS ? 'where' : 'which';
-    const result = execFileSync(cmd, ['claude'], {
+    const result = execFileSync('which', ['claude'], {
       encoding: 'utf-8',
-      shell: true,
       env: { ...process.env, CLAUDECODE: undefined },
     }).trim();
-    // Windows where 返回多行，优先 .cmd
-    const lines = result.split('\n').map(l => l.trim()).filter(Boolean);
-    _claudeBinCache = lines.find(l => l.endsWith('.cmd')) || lines[0] || 'claude';
-    return _claudeBinCache;
+    _spawnCache = { bin: result || 'claude', extraArgs: [], shell: false };
   } catch {
-    _claudeBinCache = 'claude';
-    return _claudeBinCache;
+    _spawnCache = { bin: 'claude', extraArgs: [], shell: false };
   }
+  return _spawnCache;
 }
 
 export async function checkClaudeAvailable() {
   try {
-    const bin = resolveClaudeBin();
-    const result = execFileSync(bin, ['--version'], {
+    const { bin, extraArgs, shell } = resolveClaudeSpawn();
+    const result = execFileSync(bin, [...extraArgs, '--version'], {
       encoding: 'utf-8',
-      shell: SPAWN_OPTS_SHELL,
+      shell,
       env: { ...process.env, CLAUDECODE: undefined },
     });
     return result.trim();
