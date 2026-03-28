@@ -198,7 +198,7 @@ export async function login() {
 
 // ── token validation ─────────────────────────────────────────────────────────
 
-async function validateToken(token) {
+export async function validateToken(token) {
   try {
     const resp = await apiPost('ilink/bot/getupdates', {
       get_updates_buf: '',
@@ -371,6 +371,14 @@ export async function getConfig(token, userId, contextToken) {
 }
 
 // ── 清除状态 ─────────────────────────────────────────────────────────────────
+
+export function getSavedAccount() {
+  return loadState('account');
+}
+
+export function saveAccount(account) {
+  saveState('account', account);
+}
 
 export function clearAuth() {
   try { fs.unlinkSync(path.join(STATE_DIR, 'account.json')); } catch {}

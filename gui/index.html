@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>微信 Claude Bot</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 头部 -->
+    <header>
+      <div class="header-left">
+        <div class="logo">C</div>
+        <h1>微信 Claude Bot</h1>
+      </div>
+      <div class="header-right">
+        <span id="status-dot" class="dot dot-off"></span>
+        <span id="status-text">未启动</span>
+      </div>
+    </header>
+
+    <!-- 主内容区（动态切换） -->
+    <main>
+      <!-- 环境检测 -->
+      <section id="view-checking" class="view active">
+        <div class="center-box">
+          <div class="spinner"></div>
+          <p>正在检测环境...</p>
+        </div>
+      </section>
+
+      <!-- 环境错误 -->
+      <section id="view-env-error" class="view">
+        <div class="center-box">
+          <div class="icon-big">❌</div>
+          <h2>环境检测失败</h2>
+          <p id="env-error-msg">未检测到 Claude Code CLI</p>
+          <div class="env-steps">
+            <p>请先安装 Claude Code：</p>
+            <code>npm install -g @anthropic-ai/claude-code</code>
+            <button id="btn-retry" class="btn btn-primary">重新检测</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 扫码登录 -->
+      <section id="view-qr" class="view">
+        <div class="center-box">
+          <h2>扫码连接微信</h2>
+          <div id="qr-container">
+            <div class="spinner"></div>
+            <p>正在获取二维码...</p>
+          </div>
+          <p class="hint" id="qr-hint">打开微信 → 扫描二维码</p>
+        </div>
+      </section>
+
+      <!-- 运行状态 -->
+      <section id="view-running" class="view">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">运行时间</span>
+            <span class="stat-value" id="stat-uptime">0m</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">消息数</span>
+            <span class="stat-value" id="stat-messages">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">活跃用户</span>
+            <span class="stat-value" id="stat-users">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">当前模型</span>
+            <span class="stat-value" id="stat-model">Sonnet</span>
+          </div>
+        </div>
+
+        <!-- 最近消息 -->
+        <div class="section-title">最近消息</div>
+        <div id="recent-messages" class="message-list">
+          <div class="empty-hint">等待消息...</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 日志区 -->
+    <div id="log-panel" class="log-panel collapsed">
+      <div id="log-toggle" class="log-toggle">
+        <span>日志</span>
+        <span id="log-arrow">▲</span>
+      </div>
+      <div id="log-content" class="log-content"></div>
+    </div>
+
+    <!-- 底部工具栏 -->
+    <footer>
+      <span class="footer-hint">Bot 运行在本机 · 关闭此页面不影响 Bot</span>
+      <div class="footer-buttons">
+        <button id="btn-stop" class="btn btn-small btn-danger" style="display:none">停止</button>
+        <button id="btn-start" class="btn btn-small btn-primary" style="display:none">启动</button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
