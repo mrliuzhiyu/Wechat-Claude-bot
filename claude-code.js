@@ -116,7 +116,7 @@ export async function chat(userId, message, opts = {}) {
   }
 }
 
-async function _doChat(userId, message, opts) {
+async function _doChat(userId, message, opts, retryCount = 0) {
   const session = sessions.get(userId);
   const now = Date.now();
 
@@ -175,7 +175,9 @@ async function _doChat(userId, message, opts) {
     let toolUseCount = 0;
     let lastProgressTime = 0;
     const PROGRESS_THROTTLE_MS = 3000;
-    const writtenFiles = [];  // 记录 Claude Code 创建/写入的文件
+    const writtenFiles = [];
+    let timedOut = false;
+    let cleaned = false;
 
     proc.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
@@ -236,6 +238,8 @@ async function _doChat(userId, message, opts) {
     }
 
     function cleanup() {
+      if (cleaned) return;
+      cleaned = true;
       activeProcesses = Math.max(0, activeProcesses - 1);
       activeChildren.delete(proc);
     }
@@ -247,10 +251,20 @@ async function _doChat(userId, message, opts) {
         try { handleEvent(JSON.parse(stdout)); } catch {}
       }
 
+      // 超时被杀
+      if (timedOut) {
+        const partial = getReplyText();
+        resolve({
+          text: partial || '⏱️ Claude Code 处理超时（5分钟），请拆分成更小的步骤。',
+          writtenFiles,
+        });
+        return;
+      }
+
       if (code !== 0 && !getReplyText()) {
-        if (sessionId && (stderr.includes('session') || stderr.includes('conversation'))) {
+        if (retryCount < 1 && sessionId && (stderr.includes('session') || stderr.includes('conversation'))) {
           sessions.delete(userId);
-          _doChat(userId, message, opts).then(resolve).catch(reject);
+          _doChat(userId, message, opts, retryCount + 1).then(resolve).catch(reject);
           return;
         }
         reject(new Error(`Claude Code 退出码 ${code}: ${stderr.slice(0, 500)}`));
@@ -275,13 +289,18 @@ async function _doChat(userId, message, opts) {
       reject(new Error(`无法启动 claude 命令: ${err.message}\n请确认已安装: npm install -g @anthropic-ai/claude-code`));
     });
 
-    // 5分钟硬超时，不再发烦人的"仍在工作中"提醒
+    // 5分钟硬超时
+    let sigkillTimer = null;
     const killTimer = setTimeout(() => {
+      timedOut = true;
       try { proc.kill('SIGTERM'); } catch {}
-      setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
+      sigkillTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 5000);
     }, 5 * 60_000);
 
-    proc.on('close', () => clearTimeout(killTimer));
+    proc.on('close', () => {
+      clearTimeout(killTimer);
+      if (sigkillTimer) clearTimeout(sigkillTimer);
+    });
   });
 }
 

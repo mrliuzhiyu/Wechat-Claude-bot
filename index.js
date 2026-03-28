@@ -276,6 +276,12 @@ async function handleMessage(account, msg) {
   if (contextToken) ctxTokens.set(from, { token: contextToken, ts: Date.now() });
   if (!trimmed) return;
 
+  // 正在处理中的用户，提示等待
+  if (userBusy.has(from)) {
+    await send(account.token, from, '⏳ 上一条还在处理，请稍等...');
+    return;
+  }
+
   // 语音来源标注
   const isVoice = msg.source === 'voice';
   log(`👤 ${sid(from)}${isVoice ? '🎤' : ''}: ${trunc(trimmed)}`);
@@ -334,6 +340,11 @@ async function handleMessage(account, msg) {
 async function handleMediaMessage(account, msg) {
   if (msg.contextToken) ctxTokens.set(msg.from, { token: msg.contextToken, ts: Date.now() });
   const { from, type } = msg;
+
+  if (userBusy.has(from)) {
+    await send(account.token, from, '⏳ 上一条还在处理，请稍等...');
+    return;
+  }
 
   if (type === 'voice_no_text') {
     await send(account.token, from, '🎤 语音未转文字。请开启微信「语音转文字」功能，或直接打字发送。');
