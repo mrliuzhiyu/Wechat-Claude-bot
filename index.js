@@ -23,10 +23,18 @@ const MAX_REPLY_LENGTH = 4000;
 
 // 告诉 Claude Code 它运行在微信环境中
 const WECHAT_SYSTEM_PROMPT = [
-  '你正在通过微信与用户对话，回复会显示在微信中（纯文本，不支持 Markdown 渲染）。',
+  '你正在通过微信与用户对话。回复会显示在微信中（纯文本，不支持 Markdown 渲染）。',
   '保持回复简洁，适合手机阅读。不要用 Markdown 语法。',
-  '当你用 Write 工具创建图片、PDF、文档等文件时，系统会自动发送给用户，无需额外操作。',
-  '对于已有的文件，告知用户完整路径并提示发送 /send <路径> 来接收。',
+  '',
+  '文件发送规则：',
+  '- 当你用 Write 工具创建文件，或用 Bash 生成文件时，系统会自动检测并发送给用户。',
+  '- 关键：在回复中务必写明生成文件的完整绝对路径，系统会根据路径自动发送。',
+  '- 例如："已将处理后的图片保存到 C:\\Users\\Joy\\output.png"，系统会自动把这个文件发到微信。',
+  '- 不需要让用户手动使用 /send 命令，系统会自动处理。',
+  '',
+  '工作状态：',
+  '- 处理复杂任务时，先简短说明你打算做什么，让用户知道你在工作。',
+  '- 例如："我来帮你处理这张图片，先分析一下内容..."',
 ].join('\n');
 
 // ── 模型管理 ─────────────────────────────────────────────────────────────────
@@ -217,11 +225,37 @@ async function withTyping(account, userId, contextToken, fn) {
   }
 }
 
-/** 自动发送 Claude Code 创建的文件给用户 */
-async function autoSendFiles(account, userId, writtenFiles) {
-  if (!writtenFiles?.length) return;
-  for (const filePath of writtenFiles) {
+/**
+ * 从 Claude 回复文本中提取可能的文件路径
+ * 覆盖 Bash 工具生成的文件（Write 工具已通过 writtenFiles 跟踪）
+ */
+function extractFilePathsFromReply(text) {
+  const paths = [];
+  // 匹配 Windows 和 Unix 绝对路径
+  const patterns = [
+    /[A-Z]:\\[\w\\.\-\s]+\.(\w{2,5})/gi,      // C:\path\file.ext
+    /\/(?:home|tmp|var|Users|opt)\/[\w/.\-]+\.(\w{2,5})/g,  // /home/user/file.ext
+  ];
+  for (const pat of patterns) {
+    let m;
+    while ((m = pat.exec(text)) !== null) {
+      paths.push(m[0].trim());
+    }
+  }
+  return [...new Set(paths)]; // 去重
+}
+
+/** 自动发送文件给用户（Write 跟踪的 + 回复文本中提取的） */
+async function autoSendFiles(account, userId, writtenFiles, replyText) {
+  // 合并两个来源的文件路径，去重
+  const fromReply = extractFilePathsFromReply(replyText || '');
+  const allPaths = [...new Set([...(writtenFiles || []), ...fromReply])];
+  if (!allPaths.length) return;
+
+  const sent = new Set();
+  for (const filePath of allPaths) {
     try {
+      if (sent.has(filePath)) continue;
       if (!fs.existsSync(filePath)) continue;
       const ext = path.extname(filePath).toLowerCase();
       if (!AUTO_SEND_EXTS.has(ext)) continue;
@@ -232,6 +266,7 @@ async function autoSendFiles(account, userId, writtenFiles) {
       const uploaded = await media.uploadMedia(filePath, userId, account.token, account.baseUrl || 'https://ilinkai.weixin.qq.com');
       const item = media.buildMediaItem(uploaded);
       await weixin.sendMediaMessage(account.token, userId, item, ctx, path.basename(filePath));
+      sent.add(filePath);
       log(`📤 ${sid(userId)}: 自动发送 ${path.basename(filePath)}`);
     } catch (err) {
       log(`⚠️ 自动发送失败 ${path.basename(filePath)}: ${err.message.slice(0, 80)}`);
@@ -323,7 +358,7 @@ async function handleMessage(account, msg) {
     log(`🤖 ${sid(from)}: ${trunc(reply)} (${reply.length}字)`);
 
     // 自动发送 Claude Code 创建的文件
-    await autoSendFiles(account, from, writtenFiles);
+    await autoSendFiles(account, from, writtenFiles, reply);
   } catch (err) {
     const e = err.message;
     const errMsg = e.includes('超时') ? '⏱️ 超时了，试试拆分成更小的步骤。'
@@ -405,7 +440,7 @@ async function handleMediaMessage(account, msg) {
       await send(account.token, from, chunk);
     }
 
-    await autoSendFiles(account, from, writtenFiles);
+    await autoSendFiles(account, from, writtenFiles, reply);
   } catch (err) {
     await send(account.token, from, `⚠️ 分析失败: ${err.message.slice(0, 150)}`);
   } finally {

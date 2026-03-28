@@ -178,6 +178,14 @@ async function _doChat(userId, message, opts, retryCount = 0) {
     const writtenFiles = [];
     let timedOut = false;
     let cleaned = false;
+    let firstEventReceived = false;
+
+    // 如果 3 秒内没有收到任何事件，发送"思考中"提示
+    const thinkingTimer = setTimeout(() => {
+      if (!firstEventReceived) {
+        onProgress('🧠 正在思考...');
+      }
+    }, 3000);
 
     proc.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
@@ -197,6 +205,10 @@ async function _doChat(userId, message, opts, retryCount = 0) {
     });
 
     function handleEvent(event) {
+      if (!firstEventReceived) {
+        firstEventReceived = true;
+        clearTimeout(thinkingTimer);
+      }
       switch (event.type) {
         case 'assistant': {
           if (event.session_id) newSessionId = event.session_id;
@@ -240,6 +252,7 @@ async function _doChat(userId, message, opts, retryCount = 0) {
     function cleanup() {
       if (cleaned) return;
       cleaned = true;
+      clearTimeout(thinkingTimer);
       activeProcesses = Math.max(0, activeProcesses - 1);
       activeChildren.delete(proc);
     }
