@@ -21,20 +21,26 @@ dotenv.config();
 const CWD = process.env.CLAUDE_CWD || process.cwd();
 const MAX_REPLY_LENGTH = 4000;
 
+// 发件箱目录：Claude 把文件复制到这里，Bot 自动发给用户
+import { fileURLToPath } from 'node:url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUTBOX_DIR = path.join(__dirname, '.state', 'outbox');
+fs.mkdirSync(OUTBOX_DIR, { recursive: true });
+
 // 告诉 Claude Code 它运行在微信环境中
 const WECHAT_SYSTEM_PROMPT = [
-  '你正在通过微信与用户对话。回复会显示在微信中（纯文本，不支持 Markdown 渲染）。',
-  '保持回复简洁，适合手机阅读。不要用 Markdown 语法。',
+  '你正在通过微信与用户对话。回复显示在微信中（纯文本，不支持 Markdown）。',
+  '保持简洁，适合手机。不要用 Markdown 语法。',
   '',
-  '文件发送规则：',
-  '- 当你用 Write 工具创建文件，或用 Bash 生成文件时，系统会自动检测并发送给用户。',
-  '- 关键：在回复中务必写明生成文件的完整绝对路径，系统会根据路径自动发送。',
-  '- 例如："已将处理后的图片保存到 C:\\Users\\Joy\\output.png"，系统会自动把这个文件发到微信。',
-  '- 不需要让用户手动使用 /send 命令，系统会自动处理。',
+  '【重要】发送文件给用户的方法：',
+  `把文件复制到发件箱目录，系统会自动发给用户：`,
+  `  cp 文件路径 ${OUTBOX_DIR.replace(/\\/g, '/')}/`,
+  '例如用户说"把图片发给我"：',
+  `  cp ./docs/images/photo.jpg ${OUTBOX_DIR.replace(/\\/g, '/')}/`,
+  '系统会自动发送发件箱中的所有文件并清理。',
+  '你用 Write 工具新建的文件（图片/PDF/文档等）也会自动发送，无需手动复制。',
   '',
-  '工作状态：',
-  '- 处理复杂任务时，先简短说明你打算做什么，让用户知道你在工作。',
-  '- 例如："我来帮你处理这张图片，先分析一下内容..."',
+  '工作时先简短说明你要做什么，让用户知道进展。',
 ].join('\n');
 
 // ── 模型管理 ─────────────────────────────────────────────────────────────────
@@ -245,33 +251,61 @@ function extractFilePathsFromReply(text) {
   return [...new Set(paths)]; // 去重
 }
 
-/** 自动发送文件给用户（Write 跟踪的 + 回复文本中提取的） */
+/** 发送单个文件给用户 */
+async function sendFileToUser(account, userId, filePath) {
+  if (!fs.existsSync(filePath)) return false;
+  const stat = fs.statSync(filePath);
+  if (stat.size === 0 || stat.size > 50 * 1024 * 1024) return false;
+
+  const ctx = ctxTokens.get(userId)?.token;
+  const uploaded = await media.uploadMedia(filePath, userId, account.token, account.baseUrl || 'https://ilinkai.weixin.qq.com');
+  const item = media.buildMediaItem(uploaded);
+  await weixin.sendMediaMessage(account.token, userId, item, ctx, path.basename(filePath));
+  log(`📤 ${sid(userId)}: 发送 ${path.basename(filePath)}`);
+  return true;
+}
+
+/**
+ * 自动发送文件给用户，三个来源：
+ * 1. Write 工具跟踪的 writtenFiles（仅白名单扩展名）
+ * 2. 回复文本中提取的绝对路径（仅白名单扩展名）
+ * 3. 发件箱目录 .state/outbox/ 中的所有文件（不限类型）
+ */
 async function autoSendFiles(account, userId, writtenFiles, replyText) {
-  // 合并两个来源的文件路径，去重
-  const fromReply = extractFilePathsFromReply(replyText || '');
-  const allPaths = [...new Set([...(writtenFiles || []), ...fromReply])];
-  if (!allPaths.length) return;
-
   const sent = new Set();
-  for (const filePath of allPaths) {
-    try {
-      if (sent.has(filePath)) continue;
-      if (!fs.existsSync(filePath)) continue;
-      const ext = path.extname(filePath).toLowerCase();
-      if (!AUTO_SEND_EXTS.has(ext)) continue;
-      const stat = fs.statSync(filePath);
-      if (stat.size === 0 || stat.size > 50 * 1024 * 1024) continue;
 
-      const ctx = ctxTokens.get(userId)?.token;
-      const uploaded = await media.uploadMedia(filePath, userId, account.token, account.baseUrl || 'https://ilinkai.weixin.qq.com');
-      const item = media.buildMediaItem(uploaded);
-      await weixin.sendMediaMessage(account.token, userId, item, ctx, path.basename(filePath));
-      sent.add(filePath);
-      log(`📤 ${sid(userId)}: 自动发送 ${path.basename(filePath)}`);
+  // 来源 1+2：Write 跟踪 + 回复文本提取（仅白名单扩展名）
+  const fromReply = extractFilePathsFromReply(replyText || '');
+  const tracked = [...new Set([...(writtenFiles || []), ...fromReply])];
+  for (const filePath of tracked) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (!AUTO_SEND_EXTS.has(ext)) continue;
+    if (sent.has(filePath)) continue;
+    try {
+      if (await sendFileToUser(account, userId, filePath)) sent.add(filePath);
     } catch (err) {
       log(`⚠️ 自动发送失败 ${path.basename(filePath)}: ${err.message.slice(0, 80)}`);
     }
   }
+
+  // 来源 3：发件箱（不限类型，Claude 显式放进来的都发）
+  try {
+    const outboxFiles = fs.readdirSync(OUTBOX_DIR).filter(f => !f.startsWith('.'));
+    for (const name of outboxFiles) {
+      const filePath = path.join(OUTBOX_DIR, name);
+      if (sent.has(filePath)) continue;
+      try {
+        const stat = fs.statSync(filePath);
+        if (!stat.isFile()) continue;
+        if (await sendFileToUser(account, userId, filePath)) sent.add(filePath);
+        // 发送后删除
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        log(`⚠️ 发件箱发送失败 ${name}: ${err.message.slice(0, 80)}`);
+        try { fs.unlinkSync(path.join(OUTBOX_DIR, name)); } catch {}
+      }
+    }
+  } catch {}
 }
 
 /** 根据文件类型生成智能 prompt */
