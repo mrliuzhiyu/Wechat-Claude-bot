@@ -18,7 +18,12 @@ dotenv.config();
 
 // ── 配置 ─────────────────────────────────────────────────────────────────────
 
-const CWD = process.env.CLAUDE_CWD || process.cwd();
+const DEFAULT_CWD = process.env.CLAUDE_CWD || process.cwd();
+const userCwd = new Map(); // 每用户独立工作目录
+
+function getCwd(userId) {
+  return userCwd.get(userId) || DEFAULT_CWD;
+}
 const MAX_REPLY_LENGTH = 4000;
 
 // 发件箱目录：Claude 把文件复制到这里，Bot 自动发给用户
@@ -123,18 +128,30 @@ const COMMANDS = {
       }
     },
   },
+  '/cwd': {
+    handler: async (userId, args) => {
+      const target = args.trim();
+      if (!target) return `当前工作目录: ${getCwd(userId)}\n\n切换: /cwd <路径>\n例如: /cwd D:\\projects\\my-app`;
+      if (!fs.existsSync(target)) return `❌ 目录不存在: ${target}`;
+      if (!fs.statSync(target).isDirectory()) return `❌ 不是目录: ${target}`;
+      userCwd.set(userId, target);
+      claude.clearSession(userId); // 切换目录要重置会话
+      return `✅ 工作目录切换到: ${target}\n对话已重置。`;
+    },
+  },
   '/help': {
     handler: async (userId) => [
       '命令:',
       '  /new — 重置对话',
       '  /model — 切换模型 (sonnet/opus/haiku)',
+      '  /cwd <路径> — 切换工作目录/项目',
       '  /send <路径> — 发送本机文件到微信',
       '  /send <路径> | 说明 — 带说明发送',
       '  /status — 查看状态',
       '',
-      '支持接收: 文字、语音、图片、文件、视频',
-      'Claude 创建的文件会自动发送给你',
-      `模型: ${MODELS[getUserModel(userId)].label} | 目录: ${CWD}`,
+      '支持: 文字、语音、图片、文件、视频',
+      'Claude 创建/处理的文件会自动发给你',
+      `模型: ${MODELS[getUserModel(userId)].label} | 目录: ${getCwd(userId)}`,
     ].join('\n'),
   },
   '/status': {
@@ -143,7 +160,7 @@ const COMMANDS = {
       return [
         `Claude Code: ${v || '❌'}`,
         `模型: ${MODELS[getUserModel(userId)].label}`,
-        `目录: ${CWD}`,
+        `目录: ${getCwd(userId)}`,
         `运行: ${fmtUp(process.uptime())}`,
       ].join('\n');
     },
@@ -371,7 +388,7 @@ async function handleMessage(account, msg) {
 
     const result = await withTyping(account, from, contextToken, () =>
       claude.chat(from, prompt, {
-        cwd: CWD,
+        cwd: getCwd(from),
         model: getModelId(getUserModel(from)),
         systemPrompt: WECHAT_SYSTEM_PROMPT,
         onProgress: (pt) => {
@@ -456,7 +473,7 @@ async function handleMediaMessage(account, msg) {
 
     const result = await withTyping(account, from, msg.contextToken, () =>
       claude.chat(from, prompt, {
-        cwd: CWD,
+        cwd: getCwd(from),
         model: getModelId(getUserModel(from)),
         systemPrompt: WECHAT_SYSTEM_PROMPT,
         onProgress: (pt) => {
@@ -546,7 +563,7 @@ async function main() {
   }
 
   console.log(`✅ Claude Code ${version}`);
-  console.log(`📁 ${CWD}`);
+  console.log(`📁 ${DEFAULT_CWD}`);
   console.log(`🧠 默认模型: ${MODELS[defaultModel].label} (微信发 /model 切换)\n`);
 
   while (!stopping) {

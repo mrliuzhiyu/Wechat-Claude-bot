@@ -27,7 +27,8 @@ const locks = new Map();      // userId → Promise（同用户串行）
 let activeProcesses = 0;
 const MAX_CONCURRENT = 3;
 const MAX_SESSIONS = 100;
-const SESSION_EXPIRE_MS = 60 * 60 * 1000;
+// 不设会话过期时间 — Claude Code session 本身不过期
+// 仅在总数超过 MAX_SESSIONS 时清理最旧的
 
 const activeChildren = new Set();
 
@@ -118,12 +119,10 @@ export async function chat(userId, message, opts = {}) {
 
 async function _doChat(userId, message, opts, retryCount = 0) {
   const session = sessions.get(userId);
-  const now = Date.now();
 
-  cleanupExpiredSessions();
+  cleanupOldestSessions();
 
-  const isExpired = session && (now - session.lastActive > SESSION_EXPIRE_MS);
-  const sessionId = (!isExpired && session?.sessionId) || null;
+  const sessionId = session?.sessionId || null;
 
   const args = [
     '-p',
@@ -319,18 +318,12 @@ async function _doChat(userId, message, opts, retryCount = 0) {
 
 // ── 辅助函数 ─────────────────────────────────────────────────────────────────
 
-function cleanupExpiredSessions() {
-  const now = Date.now();
-  for (const [userId, session] of sessions) {
-    if (now - session.lastActive > SESSION_EXPIRE_MS) {
-      sessions.delete(userId);
-    }
-  }
-  if (sessions.size > MAX_SESSIONS) {
-    const sorted = [...sessions.entries()].sort((a, b) => a[1].lastActive - b[1].lastActive);
-    for (const [userId] of sorted.slice(0, sessions.size - MAX_SESSIONS)) {
-      sessions.delete(userId);
-    }
+/** 仅在超过 MAX_SESSIONS 时清理最旧的会话，不设时间过期 */
+function cleanupOldestSessions() {
+  if (sessions.size <= MAX_SESSIONS) return;
+  const sorted = [...sessions.entries()].sort((a, b) => a[1].lastActive - b[1].lastActive);
+  for (const [userId] of sorted.slice(0, sessions.size - MAX_SESSIONS)) {
+    sessions.delete(userId);
   }
 }
 
