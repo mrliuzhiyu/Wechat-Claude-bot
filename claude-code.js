@@ -21,14 +21,29 @@ function cleanEnv() {
 
 // ── 状态管理 ─────────────────────────────────────────────────────────────────
 
-const sessions = new Map();   // userId → { sessionId, lastActive }
-const locks = new Map();      // userId → Promise（同用户串行）
+const SESSION_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.state', 'sessions.json');
+import { fileURLToPath } from 'node:url';
+
+/** 从磁盘恢复 sessions（PM2 重启后不丢会话） */
+function loadSessions() {
+  try {
+    const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
+    return new Map(Object.entries(data));
+  } catch { return new Map(); }
+}
+function saveSessions() {
+  try {
+    fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(Object.fromEntries(sessions)));
+  } catch {}
+}
+
+const sessions = loadSessions(); // userId → { sessionId, lastActive }
+const locks = new Map();
 
 let activeProcesses = 0;
 const MAX_CONCURRENT = 3;
 const MAX_SESSIONS = 100;
-// 不设会话过期时间 — Claude Code session 本身不过期
-// 仅在总数超过 MAX_SESSIONS 时清理最旧的
 
 const activeChildren = new Set();
 
@@ -160,6 +175,7 @@ async function _doChat(userId, message, opts, retryCount = 0) {
     const proc = spawn(bin, [...extraArgs, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
       shell,
+      windowsHide: true,  // 不弹 CMD 窗口
       cwd: opts.cwd || undefined,
       env: cleanEnv(),
     });
@@ -291,9 +307,10 @@ async function _doChat(userId, message, opts, retryCount = 0) {
         return;
       }
 
-      // 更新 session
+      // 更新 session 并持久化
       if (newSessionId) {
         sessions.set(userId, { sessionId: newSessionId, lastActive: Date.now() });
+        saveSessions();
       } else if (session) {
         session.lastActive = Date.now();
       }
@@ -334,10 +351,12 @@ function cleanupOldestSessions() {
   for (const [userId] of sorted.slice(0, sessions.size - MAX_SESSIONS)) {
     sessions.delete(userId);
   }
+  saveSessions();
 }
 
 export function clearSession(userId) {
   sessions.delete(userId);
+  saveSessions();
 }
 
 export function clearAllSessions() {
