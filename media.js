@@ -109,6 +109,35 @@ async function uploadBufferToCdn(buf, uploadParam, filekey, aeskey) {
   throw lastErr || new Error('CDN upload failed');
 }
 
+/**
+ * 加密并上传到完整 URL（新版 API 返回 upload_full_url）
+ */
+async function uploadBufferToFullUrl(buf, fullUrl, aeskey) {
+  const ciphertext = encryptAesEcb(buf, aeskey);
+
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(fullUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: new Uint8Array(ciphertext),
+      });
+      if (res.status >= 400 && res.status < 500) {
+        throw new Error(`CDN upload client error: ${res.status}`);
+      }
+      if (!res.ok) throw new Error(`CDN upload: ${res.status}`);
+      const downloadParam = res.headers.get('x-encrypted-param');
+      if (!downloadParam) throw new Error('CDN response missing x-encrypted-param');
+      return { downloadParam };
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 3 || (err.message && err.message.includes('client error'))) throw err;
+    }
+  }
+  throw lastErr || new Error('CDN upload failed');
+}
+
 // ── 媒体类型 ─────────────────────────────────────────────────────────────────
 
 const UPLOAD_MEDIA_TYPE = { IMAGE: 1, VIDEO: 2, FILE: 3, VOICE: 4 };
@@ -255,11 +284,23 @@ export async function uploadMedia(filePath, toUserId, token, baseUrl) {
   });
   if (!res.ok) throw new Error(`getUploadUrl failed: ${res.status}`);
   const uploadResp = await res.json();
+
+  // API 可能返回 upload_param 或 upload_full_url
+  const uploadFullUrl = uploadResp.upload_full_url;
   const uploadParam = uploadResp.upload_param;
-  if (!uploadParam) throw new Error('getUploadUrl: no upload_param');
+  if (!uploadFullUrl && !uploadParam) throw new Error('getUploadUrl: no upload_param or upload_full_url');
 
   // 2. 加密上传
-  const { downloadParam } = await uploadBufferToCdn(plaintext, uploadParam, filekey, aeskey);
+  let downloadParam;
+  if (uploadFullUrl) {
+    // 新版 API：返回完整上传 URL，直接用
+    const result = await uploadBufferToFullUrl(plaintext, uploadFullUrl, aeskey);
+    downloadParam = result.downloadParam;
+  } else {
+    // 旧版 API：需要拼接 URL
+    const result = await uploadBufferToCdn(plaintext, uploadParam, filekey, aeskey);
+    downloadParam = result.downloadParam;
+  }
 
   return {
     filekey,
