@@ -14,7 +14,7 @@
   <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/fork"><img src="https://img.shields.io/github/forks/mrliuzhiyu/Wechat-Claude-bot?style=social" alt="GitHub Forks" /></a>
   <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/issues"><img src="https://img.shields.io/github/issues/mrliuzhiyu/Wechat-Claude-bot" alt="Issues" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen" alt="Node.js" />
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform" />
 </p>
 
@@ -245,20 +245,6 @@ Bot: 项目结构如下：
      └── README.md
 ```
 
-### Claude Code 能做什么
-
-通过微信发消息，你可以让 Claude Code：
-
-- **读取代码** — "看看 src/app.js 的内容"
-- **编写代码** — "在 utils 目录下创建一个日期格式化函数"
-- **修改代码** — "把 App 组件的背景色改成蓝色"
-- **执行命令** — "运行 npm test 看看测试结果"
-- **搜索代码** — "搜索所有用到 useState 的地方"
-- **安装依赖** — "安装 axios 和 lodash"
-- **调试问题** — "为什么构建报错了？帮我看看"
-- **代码审查** — "审查一下最近的改动有没有问题"
-- **Git 操作** — "提交当前的改动，消息写'修复登录bug'"
-
 ### 实时进度
 
 Claude Code 执行操作时，你会收到实时进度反馈：
@@ -365,27 +351,36 @@ Bot: [显示日志...]
 
 ```
 Wechat-Claude-bot/
-├── index.js          # 主入口：消息路由、斜杠命令、Markdown 转换
+├── index.js          # Node.js 主入口：消息路由、斜杠命令、Markdown 转换
+├── bot-core.js       # Bot 核心逻辑：消息处理、会话管理、进度回调
 ├── weixin-api.js     # 微信 iLink Bot API 封装：登录、收发消息、typing
-├── claude-code.js    # Claude Code CLI 交互层：会话管理、stream 解析、进度回调
+├── claude-code.js    # Claude Code CLI 交互层：会话管理、stream 解析
 ├── media.js          # 媒体收发：CDN 上传下载、AES-128-ECB 加解密
-├── package.json
+├── gui-server.js     # Web GUI 后端服务
+├── start-gui.js      # Web GUI 启动脚本
+├── gui/              # Web GUI 前端
+│   ├── index.html
+│   ├── app.js
+│   └── style.css
+├── main.py           # Python 桌面客户端入口
+├── ui/               # PyQt6 桌面客户端 UI
+│   ├── main_window.py
+│   └── theme.py
+├── core/             # Python 核心模块
+│   ├── bot_engine.py
+│   ├── config.py
+│   ├── media.py
+│   └── weixin_api.py
+├── adapters/         # Python 适配器层
+│   ├── base.py
+│   └── claude_code.py
+├── requirements.txt  # Python 依赖
+├── package.json      # Node.js 依赖
 ├── .env.example      # 环境变量示例
-├── .gitignore
+├── DESIGN.md         # 设计系统文档
 ├── docs/             # 文档资源
 │   ├── images/       # 图片资源
-│   │   ├── wechat-clawbot.jpg  # 微信官方连接方式截图
-│   │   └── wechat-usage.jpg    # 实际使用效果截图
 │   └── i18n/         # 多语言翻译
-│       ├── README_EN.md  # English
-│       ├── README_JA.md  # 日本語
-│       ├── README_KO.md  # 한국어
-│       ├── README_RU.md  # Русский
-│       ├── README_ES.md  # Español
-│       ├── README_FR.md  # Français
-│       ├── README_DE.md  # Deutsch
-│       ├── README_PT.md  # Português
-│       └── README_AR.md  # العربية
 └── .state/           # (运行时生成)
     ├── account.json  # 微信登录凭据
     ├── sessions.json # 用户会话映射（持久化）
@@ -453,4 +448,8 @@ Bot 会自动检测 Token 过期并重新显示二维码，无需手动操作。
 
 ## License
 
-MIT
+本项目采用 [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html) 许可证。
+
+- 自由使用、修改和分发
+- 衍生作品必须以相同许可证开源
+- 详见 [LICENSE](LICENSE) 文件

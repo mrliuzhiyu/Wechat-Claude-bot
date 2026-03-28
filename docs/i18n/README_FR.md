@@ -225,20 +225,6 @@ Bot: Structure du projet :
      └── README.md
 ```
 
-### Ce que Claude Code peut faire
-
-Via les messages WeChat, vous pouvez demander à Claude Code de :
-
-- **Lire du code** — « Montre-moi le contenu de src/app.js »
-- **Écrire du code** — « Crée une fonction de formatage de date dans utils »
-- **Modifier du code** — « Change la couleur de fond du composant App en bleu »
-- **Exécuter des commandes** — « Lance npm test et montre-moi les résultats »
-- **Rechercher du code** — « Trouve tous les endroits qui utilisent useState »
-- **Installer des paquets** — « Installe axios et lodash »
-- **Déboguer** — « Pourquoi la compilation échoue ? Vérifie »
-- **Revue de code** — « Vérifie les changements récents pour d'éventuels problèmes »
-- **Opérations Git** — « Fais un commit avec le message 'fix: corriger le bug de login' »
-
 ### Progression en temps réel
 
 Quand Claude Code effectue des opérations, vous recevez des mises à jour :
@@ -403,4 +389,4 @@ Oui. Le Bot peut recevoir images, fichiers et vidéos de WeChat, les télécharg
 
 ## License
 
-MIT
+GPL-3.0

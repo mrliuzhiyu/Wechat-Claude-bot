@@ -116,7 +116,12 @@ def build_media_prompt(msg_type: str, file_path: str, original_name: str = '') -
 def fmt_uptime(seconds: float) -> str:
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
-    return f'{h}h{m}m' if h > 0 else f'{m}m'
+    s = int(seconds % 60)
+    if h > 0:
+        return f'{h}h{m}m'
+    if m > 0:
+        return f'{m}m{s}s'
+    return f'{s}s'
 
 
 # ── BotEngine（在 QThread 中运行）────────────────────────────────────────────

@@ -236,20 +236,6 @@ Bot: Here's the project structure:
      └── README.md
 ```
 
-### What Claude Code Can Do
-
-Through WeChat messages, you can have Claude Code:
-
-- **Read code** — "Show me the content of src/app.js"
-- **Write code** — "Create a date formatting utility in the utils directory"
-- **Modify code** — "Change the App component's background color to blue"
-- **Run commands** — "Run npm test and show me the results"
-- **Search code** — "Find all places that use useState"
-- **Install packages** — "Install axios and lodash"
-- **Debug issues** — "Why is the build failing? Help me check"
-- **Code review** — "Review the recent changes for any issues"
-- **Git operations** — "Commit the current changes with message 'fix login bug'"
-
 ### Real-time Progress
 
 When Claude Code performs operations, you receive live progress updates:
@@ -414,4 +400,4 @@ Yes. The Bot can receive images, files, and videos from WeChat, automatically do
 
 ## License
 
-MIT
+GPL-3.0

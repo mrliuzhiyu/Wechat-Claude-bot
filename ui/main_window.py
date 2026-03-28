@@ -1,9 +1,10 @@
 """
-PyQt6 主窗口 — 完整桌面客户端
-视图: 启动检测 → 扫码登录 → 运行仪表盘 + 设置页
+微信 Claude Bot — PyQt6 主窗口
+严格遵循微信原生设计语言（DESIGN.md）
 """
 
 import io
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +15,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QStackedWidget, QTextEdit, QFrame,
     QSystemTrayIcon, QMenu, QApplication, QGridLayout,
-    QComboBox, QFileDialog, QCheckBox, QSizePolicy,
+    QComboBox, QFileDialog, QSizePolicy, QListWidget,
+    QListWidgetItem, QAbstractItemView,
 )
 
 import qrcode
@@ -23,130 +25,121 @@ from qrcode.image.pil import PilImage
 from .theme import COLORS, STYLESHEET
 from core.config import MODELS, DEFAULT_CWD
 from core.bot_engine import BotEngine, BotThread, fmt_uptime
-from adapters.claude_code import ClaudeCodeAdapter
+from adapters.registry import ENGINES, create_adapter, load_config, save_config, detect_available_engines
 
 
 # ── 图标工厂 ─────────────────────────────────────────────────────────────────
 
 def make_icon(fg: str, bg: str, size: int = 32) -> QIcon:
-    """生成 C 字母图标"""
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pixmap)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setBrush(QBrush(QColor(bg)))
-    p.setPen(Qt.PenStyle.NoPen)
-    r = size * 0.2
-    p.drawRoundedRect(0, 0, size, size, r, r)
-    p.setPen(QColor(fg))
-    p.setFont(QFont('Arial', int(size * 0.5), QFont.Weight.Bold))
-    p.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, 'C')
-    p.end()
-    return QIcon(pixmap)
-
-
-def make_dot_pixmap(color: str, size: int = 10) -> QPixmap:
-    """生成圆形状态点"""
     pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
+    pm.fill(QColor(bg))
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setBrush(QBrush(QColor(color)))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawEllipse(1, 1, size - 2, size - 2)
+    p.setPen(QColor(fg))
+    p.setFont(QFont('Arial', int(size * 0.48), QFont.Weight.Bold))
+    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, 'C')
     p.end()
-    return pm
+    return QIcon(pm)
 
 
-# ── 可复用组件 ────────────────────────────────────────────────────────────────
+# ── 微信式组件 ────────────────────────────────────────────────────────────────
 
-class StatCard(QFrame):
-    """统计卡片"""
-    def __init__(self, label: str, value: str = '0', clickable: bool = False):
-        super().__init__()
+class WxCard(QFrame):
+    """微信白色卡片"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.setStyleSheet(f"""
-            StatCard {{
-                background: {COLORS['bg_card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 10px;
-            }}
-            StatCard:hover {{
-                border-color: {COLORS['border_light'] if clickable else COLORS['border']};
+            WxCard {{
+                background: {COLORS['card']};
+                border-radius: 8px;
             }}
         """)
-        if clickable:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        v = QVBoxLayout(self)
-        v.setContentsMargins(16, 12, 16, 12)
-        v.setSpacing(2)
+
+class WxCellItem(QFrame):
+    """微信 settings cell（标签 + 值 + 箭头）"""
+    def __init__(self, label: str, value: str = '', arrow: bool = False, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f'background: {COLORS["card"]}; border-bottom: 1px solid {COLORS["divider"]};')
+        self.setFixedHeight(48)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(16, 0, 16, 0)
+        h.setSpacing(8)
 
         self._label = QLabel(label)
-        self._label.setStyleSheet(f'color: {COLORS["text_muted"]}; font-size: 11px;')
-        v.addWidget(self._label)
+        self._label.setStyleSheet(f'font-size: 14px; color: {COLORS["text"]};')
+        h.addWidget(self._label, 1)
 
         self._value = QLabel(value)
-        self._value.setStyleSheet(f'color: {COLORS["text"]}; font-size: 22px; font-weight: bold;')
-        v.addWidget(self._value)
+        self._value.setStyleSheet(f'font-size: 13px; color: {COLORS["text_secondary"]};')
+        h.addWidget(self._value)
+
+        if arrow:
+            arr = QLabel('›')
+            arr.setStyleSheet(f'font-size: 16px; color: {COLORS["text_tertiary"]};')
+            h.addWidget(arr)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_value(self, text: str):
         self._value.setText(text)
 
 
-class StepItem(QWidget):
-    """步骤指示器项"""
-    def __init__(self, text: str):
+class CheckItem(QFrame):
+    """启动检测项"""
+    def __init__(self, label: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f'background: {COLORS["card"]}; border-bottom: 1px solid {COLORS["divider"]};')
+        self.setFixedHeight(48)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(16, 0, 16, 0)
+
+        self._label = QLabel(label)
+        self._label.setStyleSheet(f'font-size: 14px; color: {COLORS["text"]};')
+        h.addWidget(self._label, 1)
+
+        self._status = QLabel('等待')
+        self._status.setStyleSheet(f'font-size: 12px; color: {COLORS["text_tertiary"]};')
+        h.addWidget(self._status)
+
+    def set_active(self, text: str = '检测中...'):
+        self._status.setText(text)
+        self._status.setStyleSheet(f'font-size: 12px; color: {COLORS["warn"]};')
+
+    def set_done(self, text: str = ''):
+        self._status.setText(f'✓ {text}' if text else '✓')
+        self._status.setStyleSheet(f'font-size: 12px; color: {COLORS["accent"]};')
+
+    def set_error(self, text: str = ''):
+        self._status.setText(f'✗ {text}' if text else '✗')
+        self._status.setStyleSheet(f'font-size: 12px; color: {COLORS["error"]};')
+
+
+class QrStepItem(QWidget):
+    """扫码步骤"""
+    def __init__(self, number: str, text: str):
         super().__init__()
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 4, 0, 4)
         h.setSpacing(10)
 
-        self._dot = QLabel()
-        self._dot.setFixedSize(20, 20)
+        self._dot = QLabel(number)
+        self._dot.setFixedSize(22, 22)
         self._dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._set_state('pending')
+        self._dot.setStyleSheet(f'background: {COLORS["divider"]}; color: {COLORS["text_tertiary"]}; border-radius: 11px; font-size: 12px; font-weight: 600;')
         h.addWidget(self._dot)
 
         self._text = QLabel(text)
-        self._text.setStyleSheet(f'color: {COLORS["text_dim"]}; font-size: 13px;')
+        self._text.setStyleSheet(f'font-size: 14px; color: {COLORS["text_tertiary"]};')
         h.addWidget(self._text, 1)
 
-        self._status = QLabel('')
-        self._status.setStyleSheet(f'color: {COLORS["text_muted"]}; font-size: 12px;')
-        self._status.setAlignment(Qt.AlignmentFlag.AlignRight)
-        h.addWidget(self._status)
+    def set_done(self):
+        self._dot.setText('✓')
+        self._dot.setStyleSheet(f'background: {COLORS["accent"]}; color: white; border-radius: 11px; font-size: 12px; font-weight: 600;')
+        self._text.setStyleSheet(f'font-size: 14px; color: {COLORS["accent"]};')
 
-    def _set_state(self, state: str):
-        colors = {
-            'pending': COLORS['border'],
-            'active': COLORS['warn'],
-            'done': COLORS['accent'],
-            'error': COLORS['danger'],
-        }
-        c = colors.get(state, COLORS['border'])
-        symbols = {'pending': '○', 'active': '◌', 'done': '✓', 'error': '✗'}
-        sym = symbols.get(state, '○')
-        fg = 'white' if state in ('done', 'error') else COLORS['text_dim']
-        self._dot.setStyleSheet(f'background: {c}; color: {fg}; border-radius: 10px; font-size: 11px; font-weight: bold;')
-        self._dot.setText(sym)
-
-    def set_active(self, status_text: str = ''):
-        self._set_state('active')
-        self._text.setStyleSheet(f'color: {COLORS["text"]}; font-size: 13px;')
-        self._status.setText(status_text)
-        self._status.setStyleSheet(f'color: {COLORS["warn"]}; font-size: 12px;')
-
-    def set_done(self, status_text: str = ''):
-        self._set_state('done')
-        self._text.setStyleSheet(f'color: {COLORS["accent"]}; font-size: 13px;')
-        self._status.setText(status_text)
-        self._status.setStyleSheet(f'color: {COLORS["accent"]}; font-size: 12px;')
-
-    def set_error(self, status_text: str = ''):
-        self._set_state('error')
-        self._text.setStyleSheet(f'color: {COLORS["danger"]}; font-size: 13px;')
-        self._status.setText(status_text)
-        self._status.setStyleSheet(f'color: {COLORS["danger"]}; font-size: 12px;')
+    def set_active(self):
+        self._dot.setStyleSheet(f'background: {COLORS["warn"]}; color: white; border-radius: 11px; font-size: 12px; font-weight: 600;')
+        self._text.setStyleSheet(f'font-size: 14px; color: {COLORS["text"]};')
 
 
 # ── 主窗口 ────────────────────────────────────────────────────────────────────
@@ -156,16 +149,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('微信 Claude Bot')
-        self.setMinimumSize(480, 640)
-        self.resize(520, 720)
+        self.setMinimumSize(440, 620)
+        self.resize(480, 700)
         self.setStyleSheet(STYLESHEET)
 
-        # 窗口图标（黑C白底）
         self._app_icon = make_icon('#222222', '#ffffff', 64)
         self.setWindowIcon(self._app_icon)
 
-        # 引擎
-        self.adapter = ClaudeCodeAdapter()
+        # 引擎（从保存的配置创建）
+        self._engine_config = load_config()
+        self.adapter = create_adapter(config=self._engine_config)
         self.engine = BotEngine(self.adapter)
         self.bot_thread = BotThread(self.engine)
         self._connect_signals()
@@ -174,6 +167,8 @@ class MainWindow(QMainWindow):
         self.start_time = None
         self.message_count = 0
         self._log_unread = 0
+        self._prev_view = 0          # 栈式导航：进入设置/文件页前的视图索引
+        self._tray_hint_shown = False # 首次关闭窗口才弹提示
 
         # UI
         self._build_ui()
@@ -182,6 +177,9 @@ class MainWindow(QMainWindow):
         # 定时器
         self.uptime_timer = QTimer(self)
         self.uptime_timer.timeout.connect(self._update_uptime)
+
+        # 拖拽支持
+        self.setAcceptDrops(True)
 
         # 自动启动
         QTimer.singleShot(200, self._start_bot)
@@ -199,13 +197,13 @@ class MainWindow(QMainWindow):
 
         root.addWidget(self._build_header())
 
-        # 内容区
         self.stack = QStackedWidget()
         self.stack.addWidget(self._build_checking_view())   # 0
         self.stack.addWidget(self._build_env_error_view())  # 1
         self.stack.addWidget(self._build_qr_view())         # 2
         self.stack.addWidget(self._build_running_view())     # 3
         self.stack.addWidget(self._build_settings_view())    # 4
+        self.stack.addWidget(self._build_files_view())       # 5
         root.addWidget(self.stack, 1)
 
         root.addWidget(self._build_log_panel())
@@ -215,40 +213,38 @@ class MainWindow(QMainWindow):
 
     def _build_header(self) -> QWidget:
         header = QFrame()
-        header.setFixedHeight(52)
-        header.setStyleSheet(f'QFrame {{ background: {COLORS["bg"]}; border-bottom: 1px solid {COLORS["border"]}; }}')
+        header.setFixedHeight(48)
+        header.setStyleSheet(f'QFrame {{ background: {COLORS["card"]}; border-bottom: 1px solid {COLORS["divider"]}; }}')
         h = QHBoxLayout(header)
         h.setContentsMargins(16, 0, 12, 0)
         h.setSpacing(10)
 
         logo = QLabel('C')
-        logo.setFixedSize(30, 30)
+        logo.setFixedSize(28, 28)
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet(f'background: {COLORS["accent"]}; color: white; border-radius: 7px; font-weight: bold; font-size: 16px;')
+        logo.setStyleSheet(f'background: {COLORS["accent"]}; color: white; border-radius: 6px; font-weight: bold; font-size: 15px;')
         h.addWidget(logo)
 
         title = QLabel('微信 Claude Bot')
-        title.setStyleSheet('font-size: 15px; font-weight: bold;')
+        title.setStyleSheet(f'font-size: 15px; font-weight: 600; color: {COLORS["text"]};')
         h.addWidget(title)
         h.addStretch()
 
-        # 状态
         self.status_dot = QLabel()
         self.status_dot.setFixedSize(8, 8)
         self._set_dot('off')
         h.addWidget(self.status_dot)
 
         self.status_text = QLabel('未启动')
-        self.status_text.setStyleSheet(f'color: {COLORS["text_dim"]}; font-size: 12px;')
+        self.status_text.setStyleSheet(f'color: {COLORS["text_secondary"]}; font-size: 12px;')
         h.addWidget(self.status_text)
 
-        # 设置按钮
-        self.btn_settings = QPushButton('⚙')
-        self.btn_settings.setProperty('class', 'icon')
-        self.btn_settings.setFixedSize(32, 32)
-        self.btn_settings.setToolTip('设置')
-        self.btn_settings.clicked.connect(self._toggle_settings)
-        h.addWidget(self.btn_settings)
+        btn_settings = QPushButton('⚙')
+        btn_settings.setProperty('class', 'icon')
+        btn_settings.setFixedSize(32, 32)
+        btn_settings.setToolTip('设置')
+        btn_settings.clicked.connect(self._toggle_settings)
+        h.addWidget(btn_settings)
 
         return header
 
@@ -257,26 +253,36 @@ class MainWindow(QMainWindow):
     def _build_checking_view(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(40, 60, 40, 40)
-        v.setSpacing(8)
+        v.setContentsMargins(24, 48, 24, 24)
+        v.setSpacing(4)
 
         title = QLabel('启动检测')
-        title.setStyleSheet('font-size: 18px; font-weight: bold;')
+        title.setStyleSheet(f'font-size: 17px; font-weight: 600; color: {COLORS["text"]};')
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
 
         sub = QLabel('正在检查运行环境')
-        sub.setStyleSheet(f'color: {COLORS["text_dim"]}; font-size: 13px; margin-bottom: 24px;')
+        sub.setStyleSheet(f'font-size: 13px; color: {COLORS["text_secondary"]}; margin-bottom: 24px;')
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(sub)
 
-        self.step_claude = StepItem('Claude Code CLI')
-        self.step_weixin = StepItem('微信连接')
-        self.step_ready = StepItem('就绪')
+        # 检测列表（微信式白色卡片）
+        card = WxCard()
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
 
-        v.addWidget(self.step_claude)
-        v.addWidget(self.step_weixin)
-        v.addWidget(self.step_ready)
+        self.check_claude = CheckItem('Claude Code CLI')
+        self.check_weixin = CheckItem('微信连接')
+        self.check_ready = CheckItem('就绪')
+        # 去掉最后一项的下边框
+        self.check_ready.setStyleSheet(f'background: {COLORS["card"]};')
+
+        cl.addWidget(self.check_claude)
+        cl.addWidget(self.check_weixin)
+        cl.addWidget(self.check_ready)
+
+        v.addWidget(card)
         v.addStretch()
         return w
 
@@ -289,26 +295,26 @@ class MainWindow(QMainWindow):
         v.setSpacing(12)
 
         icon = QLabel('✗')
-        icon.setFixedSize(56, 56)
+        icon.setFixedSize(52, 52)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet(f'background: {COLORS["danger"]}; color: white; border-radius: 28px; font-size: 28px; font-weight: bold;')
+        icon.setStyleSheet(f'background: {COLORS["error"]}; color: white; border-radius: 26px; font-size: 24px; font-weight: bold;')
         v.addWidget(icon, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.env_error_title = QLabel('环境检测失败')
-        self.env_error_title.setStyleSheet('font-size: 18px; font-weight: bold;')
-        self.env_error_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        v.addWidget(self.env_error_title)
+        title = QLabel('环境检测失败')
+        title.setStyleSheet(f'font-size: 17px; font-weight: 600; color: {COLORS["text"]};')
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(title)
 
-        self.env_error_detail = QLabel('未检测到 Claude Code CLI')
-        self.env_error_detail.setStyleSheet(f'color: {COLORS["text_dim"]}; font-size: 13px;')
-        self.env_error_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        v.addWidget(self.env_error_detail)
+        detail = QLabel('未检测到 Claude Code CLI')
+        detail.setStyleSheet(f'font-size: 13px; color: {COLORS["text_secondary"]};')
+        detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(detail)
 
-        cmd_box = QLabel('npm install -g @anthropic-ai/claude-code')
-        cmd_box.setStyleSheet(f'background: {COLORS["bg_card"]}; color: {COLORS["accent"]}; border: 1px solid {COLORS["border"]}; border-radius: 6px; padding: 10px 16px; font-family: Consolas, monospace; font-size: 12px;')
-        cmd_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cmd_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        v.addWidget(cmd_box, alignment=Qt.AlignmentFlag.AlignCenter)
+        cmd = QLabel('npm install -g @anthropic-ai/claude-code')
+        cmd.setStyleSheet(f'background: {COLORS["card"]}; color: {COLORS["text"]}; border: 1px solid {COLORS["divider"]}; border-radius: 4px; padding: 10px 16px; font-family: Consolas, monospace; font-size: 12px;')
+        cmd.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cmd.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        v.addWidget(cmd, alignment=Qt.AlignmentFlag.AlignCenter)
 
         btn = QPushButton('重新检测')
         btn.setFixedWidth(120)
@@ -316,7 +322,7 @@ class MainWindow(QMainWindow):
         v.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
         return w
 
-    # ── 视图2: 扫码登录 ──
+    # ── 视图2: 扫码 ──
 
     def _build_qr_view(self) -> QWidget:
         w = QWidget()
@@ -325,225 +331,541 @@ class MainWindow(QMainWindow):
         v.setSpacing(16)
 
         title = QLabel('连接微信')
-        title.setStyleSheet('font-size: 20px; font-weight: bold;')
+        title.setStyleSheet(f'font-size: 18px; font-weight: 600; color: {COLORS["text"]};')
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(title)
 
-        # 二维码容器
-        qr_frame = QFrame()
-        qr_frame.setFixedSize(260, 260)
-        qr_frame.setStyleSheet('background: white; border-radius: 12px;')
-        qr_layout = QVBoxLayout(qr_frame)
-        qr_layout.setContentsMargins(0, 0, 0, 0)
-        self.qr_label = QLabel('获取中...')
+        sub = QLabel('使用微信扫一扫连接你的 AI 助手')
+        sub.setStyleSheet(f'font-size: 13px; color: {COLORS["text_secondary"]};')
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(sub)
+
+        # QR 容器
+        qr_card = QFrame()
+        qr_card.setFixedSize(220, 220)
+        qr_card.setStyleSheet(f'background: white; border-radius: 8px;')
+        ql = QVBoxLayout(qr_card)
+        ql.setContentsMargins(0, 0, 0, 0)
+        # QR 占位骨架
+        qr_placeholder = QWidget()
+        qpl = QVBoxLayout(qr_placeholder)
+        qpl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        qpl.setSpacing(8)
+        qr_icon = QLabel('⏳')
+        qr_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        qr_icon.setStyleSheet(f'font-size: 36px; color: {COLORS["text_tertiary"]};')
+        qpl.addWidget(qr_icon)
+        qr_hint = QLabel('二维码获取中...')
+        qr_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        qr_hint.setStyleSheet(f'color: {COLORS["text_tertiary"]}; font-size: 13px;')
+        qpl.addWidget(qr_hint)
+        self._qr_placeholder = qr_placeholder
+        ql.addWidget(qr_placeholder)
+
+        self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.qr_label.setStyleSheet(f'color: {COLORS["text_muted"]}; font-size: 13px; background: white; border-radius: 12px;')
-        qr_layout.addWidget(self.qr_label)
-        v.addWidget(qr_frame, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.qr_label.setVisible(False)
+        ql.addWidget(self.qr_label)
+        v.addWidget(qr_card, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # 步骤引导
         steps_w = QWidget()
-        steps_w.setFixedWidth(280)
+        steps_w.setFixedWidth(260)
         sv = QVBoxLayout(steps_w)
-        sv.setContentsMargins(0, 8, 0, 0)
-        sv.setSpacing(4)
+        sv.setContentsMargins(0, 0, 0, 0)
+        sv.setSpacing(2)
 
-        self.qr_step1 = StepItem('打开微信')
-        self.qr_step2 = StepItem('扫描上方二维码')
-        self.qr_step3 = StepItem('在微信中点击确认')
-        self.qr_step1.set_active()
+        self.qr_step1 = QrStepItem('1', '打开微信')
+        self.qr_step2 = QrStepItem('2', '扫描上方二维码')
+        self.qr_step3 = QrStepItem('3', '在微信中点击确认')
 
         sv.addWidget(self.qr_step1)
         sv.addWidget(self.qr_step2)
         sv.addWidget(self.qr_step3)
         v.addWidget(steps_w, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # 刷新提示
-        self.qr_refresh_btn = QPushButton('二维码过期？点击刷新')
-        self.qr_refresh_btn.setProperty('class', 'ghost')
-        self.qr_refresh_btn.setFixedWidth(200)
-        self.qr_refresh_btn.setVisible(False)
-        v.addWidget(self.qr_refresh_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
         return w
 
-    # ── 视图3: 运行仪表盘 ──
+    # ── 视图3: 仪表盘 ──
 
     def _build_running_view(self) -> QWidget:
         w = QWidget()
+        w.setStyleSheet(f'background: {COLORS["bg"]};')
         v = QVBoxLayout(w)
-        v.setContentsMargins(16, 16, 16, 8)
-        v.setSpacing(12)
+        v.setContentsMargins(12, 12, 12, 8)
+        v.setSpacing(8)
 
-        # 统计卡片 2x2
-        grid = QGridLayout()
-        grid.setSpacing(10)
+        # 统计卡片（微信式：白色卡片内用分割线分隔）
+        stats_card = WxCard()
+        stats_grid = QGridLayout(stats_card)
+        stats_grid.setContentsMargins(0, 0, 0, 0)
+        stats_grid.setSpacing(0)
 
-        self.card_uptime = StatCard('运行时间', '0m')
-        self.card_messages = StatCard('消息数', '0')
-        self.card_users = StatCard('活跃用户', '0')
-        self.card_model = StatCard('当前模型', 'Sonnet', clickable=True)
-        self.card_model.mousePressEvent = lambda _: self._show_model_menu()
+        self.stat_uptime = self._stat_cell('运行时间', '0m')
+        self.stat_messages = self._stat_cell('消息数', '0')
+        self.stat_users = self._stat_cell('活跃用户', '0')
+        self.stat_model = self._stat_cell('当前模型', 'Sonnet', clickable=True)
 
-        grid.addWidget(self.card_uptime, 0, 0)
-        grid.addWidget(self.card_messages, 0, 1)
-        grid.addWidget(self.card_users, 1, 0)
-        grid.addWidget(self.card_model, 1, 1)
-        v.addLayout(grid)
+        stats_grid.addWidget(self.stat_uptime, 0, 0)
+        stats_grid.addWidget(self._vdivider(), 0, 1)
+        stats_grid.addWidget(self.stat_messages, 0, 2)
+        stats_grid.addWidget(self._hdivider(), 1, 0, 1, 3)
+        stats_grid.addWidget(self.stat_users, 2, 0)
+        stats_grid.addWidget(self._vdivider(), 2, 1)
+        stats_grid.addWidget(self.stat_model, 2, 2)
 
-        # 最近消息标题
-        msg_header = QHBoxLayout()
-        msg_title = QLabel('最近消息')
-        msg_title.setStyleSheet(f'color: {COLORS["text_muted"]}; font-size: 11px;')
-        msg_header.addWidget(msg_title)
-        msg_header.addStretch()
-        v.addLayout(msg_header)
+        v.addWidget(stats_card)
 
-        # 消息列表
+        # 消息卡片
+        msg_card = WxCard()
+        ml = QVBoxLayout(msg_card)
+        ml.setContentsMargins(0, 0, 0, 0)
+        ml.setSpacing(0)
+
+        msg_header = QLabel('最近消息')
+        msg_header.setStyleSheet(f'color: {COLORS["text_tertiary"]}; font-size: 12px; padding: 12px 16px 6px;')
+        ml.addWidget(msg_header)
+
         self.msg_list = QTextEdit()
         self.msg_list.setReadOnly(True)
-        self.msg_list.setPlaceholderText('等待消息...')
+        self.msg_list.setPlaceholderText("微信消息会显示在这里")
         self.msg_list.setStyleSheet(f"""
             QTextEdit {{
-                background: {COLORS['bg_card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 8px;
-                padding: 8px 12px;
+                background: {COLORS['card']};
+                border: none;
+                border-radius: 0 0 8px 8px;
+                padding: 4px 16px 12px;
                 font-family: "Microsoft YaHei UI", sans-serif;
-                font-size: 12px;
-                line-height: 1.5;
+                font-size: 13px;
+                color: {COLORS['text']};
             }}
         """)
-        v.addWidget(self.msg_list, 1)
+        ml.addWidget(self.msg_list, 1)
+
+        v.addWidget(msg_card, 1)
+
+        # 快捷操作栏
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+
+        btn_files = QPushButton('📁 文件收件箱')
+        btn_files.setStyleSheet(f"""
+            QPushButton {{ background: {COLORS['card']}; color: {COLORS['link']};
+                           border: 1px solid {COLORS['divider']}; border-radius: 8px;
+                           padding: 12px; font-size: 13px; font-weight: 500; }}
+            QPushButton:hover {{ background: #F5F5F5; border-color: {COLORS['accent']}; }}
+        """)
+        btn_files.clicked.connect(lambda: self._navigate_to(5))
+        action_row.addWidget(btn_files)
+
+        btn_send_file = QPushButton('📤 发送文件')
+        btn_send_file.setProperty('class', 'text')
+        btn_send_file.setStyleSheet(f"""
+            QPushButton {{ background: {COLORS['card']}; color: {COLORS['link']};
+                           border: 1px solid {COLORS['divider']}; border-radius: 8px;
+                           padding: 12px; font-size: 13px; font-weight: 500; }}
+            QPushButton:hover {{ background: #F5F5F5; border-color: {COLORS['accent']}; }}
+        """)
+        btn_send_file.clicked.connect(self._send_file_dialog)
+        action_row.addWidget(btn_send_file)
+
+        v.addLayout(action_row)
+        return w
+
+    def _stat_cell(self, label: str, value: str, clickable: bool = False) -> QWidget:
+        w = QWidget()
+        w.setStyleSheet(f'background: {COLORS["card"]};')
+        if clickable:
+            w.setCursor(Qt.CursorShape.PointingHandCursor)
+            w.mousePressEvent = lambda e: self._show_model_menu()
+        vl = QVBoxLayout(w)
+        w.setMinimumHeight(76)
+        vl.setContentsMargins(0, 18, 0, 18)
+        vl.setSpacing(4)
+        vl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        val = QLabel(value)
+        val.setObjectName('stat_value')
+        val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        val.setStyleSheet(f'font-size: 22px; font-weight: 700; color: {COLORS["text"]};')
+        vl.addWidget(val)
+
+        lbl = QLabel(f'{label} ›' if clickable else label)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setStyleSheet(f'font-size: 12px; color: {COLORS["text_tertiary"]};')
+        vl.addWidget(lbl)
 
         return w
+
+    def _vdivider(self) -> QFrame:
+        d = QFrame()
+        d.setFixedWidth(1)
+        d.setStyleSheet(f'background: {COLORS["divider"]};')
+        return d
+
+    def _hdivider(self) -> QFrame:
+        d = QFrame()
+        d.setFixedHeight(1)
+        d.setStyleSheet(f'background: {COLORS["divider"]};')
+        return d
 
     # ── 视图4: 设置 ──
 
     def _build_settings_view(self) -> QWidget:
         w = QWidget()
+        w.setStyleSheet(f'background: {COLORS["bg"]};')
         v = QVBoxLayout(w)
-        v.setContentsMargins(24, 20, 24, 20)
+        v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        # 标题栏
-        th = QHBoxLayout()
-        back_btn = QPushButton('← 返回')
-        back_btn.setProperty('class', 'ghost')
-        back_btn.setFixedHeight(32)
-        back_btn.clicked.connect(lambda: self.stack.setCurrentIndex(3))
-        th.addWidget(back_btn)
-        th.addStretch()
-        title = QLabel('设置')
-        title.setStyleSheet('font-size: 18px; font-weight: bold;')
-        th.addWidget(title)
-        th.addStretch()
-        # 占位平衡
-        spacer = QWidget()
-        spacer.setFixedWidth(60)
-        th.addWidget(spacer)
-        v.addLayout(th)
+        # 微信式设置头部
+        header = QFrame()
+        header.setFixedHeight(44)
+        header.setStyleSheet(f'QFrame {{ background: {COLORS["card"]}; border-bottom: 1px solid {COLORS["divider"]}; }}')
+        hh = QHBoxLayout(header)
+        hh.setContentsMargins(16, 0, 16, 0)
+        back_btn = QPushButton('‹ 返回')
+        back_btn.setProperty('class', 'text')
+        back_btn.clicked.connect(self._go_back)
+        hh.addWidget(back_btn)
+        hh.addStretch()
+        stitle = QLabel('设置')
+        stitle.setStyleSheet(f'font-size: 16px; font-weight: 600; color: {COLORS["text"]};')
+        hh.addWidget(stitle)
+        hh.addStretch()
+        hh.addSpacing(60)
+        v.addWidget(header)
 
-        v.addSpacing(20)
+        # 可滚动内容区
+        from PyQt6.QtWidgets import QScrollArea
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(f'QScrollArea {{ border: none; background: {COLORS["bg"]}; }}')
 
-        # 模型选择
-        v.addWidget(self._settings_section('模型'))
-        self.settings_model = QComboBox()
-        for key, m in MODELS.items():
-            self.settings_model.addItem(f'{m["label"]} — {m["desc"]}', key)
-        self.settings_model.currentIndexChanged.connect(self._on_model_changed)
-        v.addWidget(self.settings_model)
-        v.addSpacing(16)
+        content = QWidget()
+        content.setStyleSheet(f'background: {COLORS["bg"]};')
+        cv = QVBoxLayout(content)
+        cv.setContentsMargins(12, 12, 12, 12)
+        cv.setSpacing(0)
 
-        # 工作目录
-        v.addWidget(self._settings_section('工作目录'))
-        dir_row = QHBoxLayout()
-        self.settings_cwd_label = QLabel(DEFAULT_CWD)
-        self.settings_cwd_label.setStyleSheet(f'color: {COLORS["text"]}; font-size: 12px; background: {COLORS["bg_input"]}; border: 1px solid {COLORS["border"]}; border-radius: 6px; padding: 8px 12px;')
-        self.settings_cwd_label.setWordWrap(True)
-        dir_row.addWidget(self.settings_cwd_label, 1)
-        browse_btn = QPushButton('选择')
-        browse_btn.setProperty('class', 'ghost')
-        browse_btn.setFixedSize(56, 34)
-        browse_btn.clicked.connect(self._browse_cwd)
-        dir_row.addWidget(browse_btn)
-        v.addLayout(dir_row)
-        v.addSpacing(16)
+        # ── AI 引擎 ──
+        cv.addWidget(self._group_title('AI 引擎'))
+        engine_card = WxCard()
+        el = QVBoxLayout(engine_card)
+        el.setContentsMargins(0, 0, 0, 0)
+        el.setSpacing(0)
 
-        # 分隔线
-        sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f'background: {COLORS["border"]};')
-        v.addWidget(sep)
-        v.addSpacing(16)
+        available = detect_available_engines()
+        current_engine = self._engine_config.get('engine', 'claude_code')
 
-        # 信息区
-        v.addWidget(self._settings_section('连接信息'))
+        self._engine_cells = {}
+        for key, info in ENGINES.items():
+            is_available = available.get(key, False)
+            is_selected = (key == current_engine)
+            prefix = '● ' if is_selected else '○ '
+            suffix = '' if is_available or info['needs_api_key'] else '  (未安装)'
 
-        self.info_grid = QGridLayout()
-        self.info_grid.setSpacing(8)
-        self.info_labels = {}
-        for i, (key, label) in enumerate([('bot_id', 'Bot ID'), ('claude_ver', 'Claude Code'), ('connect_time', '连接时间')]):
-            lbl = QLabel(label)
-            lbl.setStyleSheet(f'color: {COLORS["text_muted"]}; font-size: 12px;')
-            val = QLabel('—')
-            val.setStyleSheet(f'color: {COLORS["text_dim"]}; font-size: 12px;')
-            val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.info_grid.addWidget(lbl, i, 0)
-            self.info_grid.addWidget(val, i, 1)
-            self.info_labels[key] = val
-        v.addLayout(self.info_grid)
+            cell = WxCellItem(
+                f'{prefix}{info["label"]}{suffix}',
+                info['desc'],
+                arrow=True
+            )
+            cell.mousePressEvent = lambda e, k=key: self._select_engine(k)
 
-        v.addStretch()
+            if key != list(ENGINES.keys())[-1]:
+                cell.setStyleSheet(f'background: {COLORS["card"]}; border-bottom: 1px solid {COLORS["divider"]};')
+            else:
+                cell.setStyleSheet(f'background: {COLORS["card"]};')
+
+            el.addWidget(cell)
+            self._engine_cells[key] = cell
+
+        cv.addWidget(engine_card)
+        cv.addSpacing(12)
+
+        # ── API Key（引擎需要时显示）──
+        self._apikey_group = QWidget()
+        ag = QVBoxLayout(self._apikey_group)
+        ag.setContentsMargins(0, 0, 0, 0)
+        ag.setSpacing(0)
+        ag.addWidget(self._group_title('API Key'))
+
+        apikey_card = WxCard()
+        al = QVBoxLayout(apikey_card)
+        al.setContentsMargins(16, 12, 16, 12)
+        al.setSpacing(8)
+
+        # 提供商选择（纯API模式用）
+        self._provider_row = QWidget()
+        pr = QHBoxLayout(self._provider_row)
+        pr.setContentsMargins(0, 0, 0, 0)
+        pl = QLabel('提供商')
+        pl.setStyleSheet(f'font-size: 14px; color: {COLORS["text"]};')
+        pr.addWidget(pl)
+        pr.addStretch()
+        self._provider_combo = QComboBox()
+        self._provider_combo.setFixedWidth(180)
+        from adapters.direct_api import DirectAPIAdapter
+        for pkey, pinfo in DirectAPIAdapter.PROVIDERS.items():
+            self._provider_combo.addItem(pinfo['label'], pkey)
+        self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        pr.addWidget(self._provider_combo)
+        al.addWidget(self._provider_row)
+
+        # API Key 输入
+        from PyQt6.QtWidgets import QLineEdit
+        self._apikey_input = QLineEdit()
+        self._apikey_input.setPlaceholderText('输入 API Key...')
+        self._apikey_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._apikey_input.setStyleSheet(f'''
+            QLineEdit {{
+                background: {COLORS["bg"]};
+                border: 1px solid {COLORS["divider"]};
+                border-radius: 4px;
+                padding: 8px 12px;
+                font-size: 13px;
+                color: {COLORS["text"]};
+            }}
+            QLineEdit:focus {{ border-color: {COLORS["accent"]}; }}
+        ''')
+        saved_key = self._engine_config.get('api_key', '')
+        if saved_key:
+            self._apikey_input.setText(saved_key)
+
+        # API Key 行：输入框 + 眼睛切换
+        apikey_row = QHBoxLayout()
+        apikey_row.setContentsMargins(0, 0, 0, 0)
+        apikey_row.setSpacing(4)
+        apikey_row.addWidget(self._apikey_input)
+        self._apikey_eye = QPushButton('👁')
+        self._apikey_eye.setFixedSize(32, 32)
+        self._apikey_eye.setProperty('class', 'icon')
+        self._apikey_eye.setToolTip('显示/隐���')
+        self._apikey_eye.clicked.connect(self._toggle_apikey_visibility)
+        apikey_row.addWidget(self._apikey_eye)
+        al.addLayout(apikey_row)
+
+        # OI 模型输入
+        self._oi_model_row = QWidget()
+        mr = QHBoxLayout(self._oi_model_row)
+        mr.setContentsMargins(0, 0, 0, 0)
+        ml = QLabel('模型名称')
+        ml.setStyleSheet(f'font-size: 14px; color: {COLORS["text"]};')
+        mr.addWidget(ml)
+        mr.addStretch()
+        self._oi_model_input = QLineEdit()
+        self._oi_model_input.setFixedWidth(180)
+        self._oi_model_input.setPlaceholderText('如 gpt-4o')
+        self._oi_model_input.setText(self._engine_config.get('model', 'gpt-4o'))
+        self._oi_model_input.setStyleSheet(self._apikey_input.styleSheet())
+        mr.addWidget(self._oi_model_input)
+        al.addWidget(self._oi_model_row)
+
+        # 保存按钮
+        self._save_btn = QPushButton('保存并重启 Bot')
+        self._save_btn.clicked.connect(self._save_engine_config)
+        al.addWidget(self._save_btn)
+
+        ag.addWidget(apikey_card)
+        cv.addWidget(self._apikey_group)
+
+        # 根据当前引擎显示/隐藏 API Key 区域
+        self._update_settings_visibility(current_engine)
+
+        cv.addSpacing(16)
+
+        # ── 微信模型（Claude Code 模式用）──
+        cv.addWidget(self._group_title('微信消息模型'))
+        self.settings_model_cell = WxCellItem('当前模型', 'Sonnet — 快速', arrow=True)
+        self.settings_model_cell.mousePressEvent = lambda e: self._show_model_menu()
+        self.settings_model_cell.setStyleSheet(f'background: {COLORS["card"]}; border-radius: 8px;')
+        cv.addWidget(self.settings_model_cell)
+
+        cv.addSpacing(16)
+
+        # ── 工作目录 ──
+        cv.addWidget(self._group_title('工作目录'))
+        self.settings_cwd_cell = WxCellItem('路径', DEFAULT_CWD, arrow=True)
+        self.settings_cwd_cell.mousePressEvent = lambda e: self._browse_cwd()
+        self.settings_cwd_cell.setStyleSheet(f'background: {COLORS["card"]}; border-radius: 8px;')
+        cv.addWidget(self.settings_cwd_cell)
+
+        cv.addSpacing(16)
+
+        # ── 开机自启 ──
+        cv.addWidget(self._group_title('系统'))
+        autostart_cell = QFrame()
+        autostart_cell.setStyleSheet(f'background: {COLORS["card"]}; border-radius: 8px;')
+        autostart_cell.setFixedHeight(48)
+        ash = QHBoxLayout(autostart_cell)
+        ash.setContentsMargins(16, 0, 16, 0)
+        asl = QLabel('开机自动启动')
+        asl.setStyleSheet(f'font-size: 14px; color: {COLORS["text"]};')
+        ash.addWidget(asl, 1)
+
+        from PyQt6.QtWidgets import QCheckBox
+        self._autostart_cb = QCheckBox()
+        self._autostart_cb.setChecked(self.get_auto_start())
+        self._autostart_cb.stateChanged.connect(lambda state: self.set_auto_start(state == 2))
+        ash.addWidget(self._autostart_cb)
+        cv.addWidget(autostart_cell)
+
+        cv.addSpacing(16)
+
+        # ── 连接信息 ──
+        cv.addWidget(self._group_title('连接信息'))
+        info_card = WxCard()
+        il = QVBoxLayout(info_card)
+        il.setContentsMargins(0, 0, 0, 0)
+        il.setSpacing(0)
+        self.info_bot_id = WxCellItem('Bot ID', '—')
+        self.info_engine = WxCellItem('AI 引擎', self.adapter.name)
+        self.info_time = WxCellItem('连接时间', '—')
+        self.info_time.setStyleSheet(f'background: {COLORS["card"]};')
+        il.addWidget(self.info_bot_id)
+        il.addWidget(self.info_engine)
+        il.addWidget(self.info_time)
+        cv.addWidget(info_card)
+
+        cv.addStretch()
+        scroll.setWidget(content)
+        v.addWidget(scroll, 1)
+
         return w
 
-    def _settings_section(self, text: str) -> QLabel:
+    def _group_title(self, text: str) -> QLabel:
         lbl = QLabel(text)
-        lbl.setStyleSheet(f'color: {COLORS["text_dim"]}; font-size: 11px; margin-bottom: 6px;')
+        lbl.setStyleSheet(f'font-size: 12px; color: {COLORS["text_tertiary"]}; padding: 0 16px 6px;')
         return lbl
+
+    # ── 视图5: 文件收件箱 ──
+
+    def _build_files_view(self) -> QWidget:
+        w = QWidget()
+        w.setStyleSheet(f'background: {COLORS["bg"]};')
+        w.setAcceptDrops(True)
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        # 头部
+        header = QFrame()
+        header.setFixedHeight(44)
+        header.setStyleSheet(f'QFrame {{ background: {COLORS["card"]}; border-bottom: 1px solid {COLORS["divider"]}; }}')
+        hh = QHBoxLayout(header)
+        hh.setContentsMargins(16, 0, 16, 0)
+        back_btn = QPushButton('‹ 返回')
+        back_btn.setProperty('class', 'text')
+        back_btn.clicked.connect(self._go_back)
+        hh.addWidget(back_btn)
+        hh.addStretch()
+        ftitle = QLabel('文件收件箱')
+        ftitle.setStyleSheet(f'font-size: 16px; font-weight: 600; color: {COLORS["text"]};')
+        hh.addWidget(ftitle)
+        hh.addStretch()
+        refresh_btn = QPushButton('刷新')
+        refresh_btn.setProperty('class', 'text')
+        refresh_btn.clicked.connect(self._refresh_files)
+        hh.addWidget(refresh_btn)
+        v.addWidget(header)
+
+        # 拖拽提示区
+        self._drop_hint = QLabel('将文件拖拽到此处\n发送到微信')
+        self._drop_hint.setFixedHeight(64)
+        self._drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._drop_hint.setStyleSheet(self._drop_hint_normal_ss)
+        v.addWidget(self._drop_hint)
+
+        # 文件列表
+        self.file_list = QListWidget()
+        self.file_list.setStyleSheet(f"""
+            QListWidget {{
+                background: {COLORS['card']};
+                border: none;
+                border-radius: 8px;
+                margin: 0 12px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 12px 16px;
+                border-bottom: 1px solid {COLORS['divider']};
+            }}
+            QListWidget::item:hover {{
+                background: #F5F5F5;
+            }}
+            QListWidget::item:selected {{
+                background: {COLORS['accent_light']};
+                color: {COLORS['text']};
+            }}
+        """)
+        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.file_list.itemDoubleClicked.connect(self._open_file_item)
+        v.addWidget(self.file_list, 1)
+
+        # 操作栏
+        action_bar = QHBoxLayout()
+        action_bar.setContentsMargins(12, 8, 12, 8)
+        action_bar.addStretch()
+
+        btn_open = QPushButton('打开')
+        btn_open.setFixedSize(72, 32)
+        btn_open.clicked.connect(self._open_selected_file)
+        action_bar.addWidget(btn_open)
+
+        btn_save = QPushButton('另存为')
+        btn_save.setProperty('class', 'text')
+        btn_save.setStyleSheet(f"""
+            QPushButton {{ background: {COLORS['card']}; color: {COLORS['link']};
+                           border: 1px solid {COLORS['divider']}; border-radius: 4px; padding: 6px 16px; }}
+            QPushButton:hover {{ background: #F0F0F0; }}
+        """)
+        btn_save.setFixedHeight(32)
+        btn_save.clicked.connect(self._save_file_as)
+        action_bar.addWidget(btn_save)
+
+        v.addLayout(action_bar)
+
+        # 首次加载
+        QTimer.singleShot(500, self._refresh_files)
+
+        return w
 
     # ── 日志面板 ──
 
     def _build_log_panel(self) -> QWidget:
         w = QFrame()
-        w.setStyleSheet(f'QFrame {{ border-top: 1px solid {COLORS["border"]}; }}')
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(0)
 
-        toggle_row = QHBoxLayout()
-        toggle_row.setContentsMargins(16, 0, 16, 0)
+        # 切换栏
+        toggle_frame = QFrame()
+        toggle_frame.setFixedHeight(32)
+        toggle_frame.setStyleSheet(f'QFrame {{ background: {COLORS["nav_bg"]}; border-top: 1px solid {COLORS["divider"]}; }}')
+        th = QHBoxLayout(toggle_frame)
+        th.setContentsMargins(16, 0, 16, 0)
 
-        self.log_toggle_btn = QPushButton('日志')
-        self.log_toggle_btn.setProperty('class', 'icon')
+        self.log_toggle_btn = QPushButton('日志 ▸')
         self.log_toggle_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {COLORS['bg_card']}; color: {COLORS['text_muted']};
-                border: none; border-radius: 0; padding: 5px 12px;
-                font-size: 12px; text-align: left;
-            }}
+            QPushButton {{ background: transparent; border: none; color: {COLORS['text_secondary']};
+                           font-size: 12px; padding: 0; text-align: left; }}
             QPushButton:hover {{ color: {COLORS['text']}; }}
         """)
         self.log_toggle_btn.clicked.connect(self._toggle_log)
-        toggle_row.addWidget(self.log_toggle_btn)
+        th.addWidget(self.log_toggle_btn)
 
         self.log_badge = QLabel()
-        self.log_badge.setFixedSize(18, 18)
+        self.log_badge.setFixedHeight(16)
         self.log_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.log_badge.setStyleSheet(f'background: {COLORS["danger"]}; color: white; border-radius: 9px; font-size: 10px; font-weight: bold;')
+        self.log_badge.setStyleSheet(f'background: {COLORS["error"]}; color: white; border-radius: 8px; font-size: 10px; font-weight: 600; padding: 0 6px;')
         self.log_badge.setVisible(False)
-        toggle_row.addWidget(self.log_badge)
+        th.addWidget(self.log_badge)
 
-        toggle_row.addStretch()
+        th.addStretch()
+        self.log_arrow = QLabel('▸')
+        self.log_arrow.setStyleSheet(f'color: {COLORS["text_tertiary"]}; font-size: 11px;')
+        th.addWidget(self.log_arrow)
 
-        self.log_arrow = QLabel('▲')
-        self.log_arrow.setStyleSheet(f'color: {COLORS["text_muted"]}; font-size: 10px;')
-        toggle_row.addWidget(self.log_arrow)
-
-        toggle_frame = QFrame()
-        toggle_frame.setStyleSheet(f'QFrame {{ background: {COLORS["bg_card"]}; }}')
-        toggle_frame.setFixedHeight(28)
-        toggle_frame.setLayout(toggle_row)
         v.addWidget(toggle_frame)
 
         self.log_text = QTextEdit()
@@ -558,57 +880,62 @@ class MainWindow(QMainWindow):
 
     def _build_footer(self) -> QWidget:
         footer = QFrame()
-        footer.setStyleSheet(f'QFrame {{ background: {COLORS["bg_card"]}; border-top: 1px solid {COLORS["border"]}; }}')
-        footer.setFixedHeight(42)
+        footer.setFixedHeight(40)
+        footer.setStyleSheet(f'QFrame {{ background: {COLORS["card"]}; border-top: 1px solid {COLORS["divider"]}; }}')
         h = QHBoxLayout(footer)
         h.setContentsMargins(16, 0, 12, 0)
 
-        hint = QLabel('关闭窗口 → 最小化到托盘')
-        hint.setStyleSheet(f'color: {COLORS["text_muted"]}; font-size: 11px;')
+        hint = QLabel('关闭窗口最小化到托盘')
+        hint.setStyleSheet(f'font-size: 11px; color: {COLORS["text_tertiary"]};')
         h.addWidget(hint)
         h.addStretch()
 
         self.btn_stop = QPushButton('停止')
-        self.btn_stop.setProperty('class', 'danger')
-        self.btn_stop.setFixedSize(56, 28)
+        self.btn_stop.setProperty('class', 'danger-text')
+        self.btn_stop.setFixedHeight(28)
         self.btn_stop.clicked.connect(self._stop_bot)
         self.btn_stop.setVisible(False)
         h.addWidget(self.btn_stop)
 
         self.btn_start = QPushButton('启动')
-        self.btn_start.setFixedSize(56, 28)
+        self.btn_start.setFixedSize(64, 28)
         self.btn_start.clicked.connect(self._start_bot)
         self.btn_start.setVisible(False)
         h.addWidget(self.btn_start)
 
         return footer
 
-    # ── 系统托盘（黑C白底）──
+    # ── 托盘（黑C白底）──
 
     def _build_tray(self):
-        self._tray_icon = make_icon('#222222', '#ffffff', 16)
         self.tray = QSystemTrayIcon(self)
-        self.tray.setIcon(self._tray_icon)
+        # 多尺寸托盘图标（适配高 DPI）
+        tray_icon = QIcon()
+        for s in (16, 24, 32):
+            pm = QPixmap(s, s)
+            pm.fill(QColor('#ffffff'))
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setPen(QColor('#222222'))
+            p.setFont(QFont('Arial', int(s * 0.48), QFont.Weight.Bold))
+            p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, 'C')
+            p.end()
+            tray_icon.addPixmap(pm)
+        self.tray.setIcon(tray_icon)
         self.tray.setToolTip('微信 Claude Bot')
 
         menu = QMenu()
-        menu.setStyleSheet(f"""
-            QMenu {{ background: {COLORS['bg_card']}; color: {COLORS['text']}; border: 1px solid {COLORS['border']}; padding: 4px; }}
-            QMenu::item {{ padding: 6px 20px; }}
-            QMenu::item:selected {{ background: {COLORS['bg_hover']}; }}
-        """)
         show_action = menu.addAction('显示主窗口')
         show_action.triggered.connect(self._show_window)
         menu.addSeparator()
         quit_action = menu.addAction('退出')
         quit_action.triggered.connect(self._quit)
-
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
     # ══════════════════════════════════════════════════════════════════════
-    #  信号连接 & 处理
+    #  信号
     # ══════════════════════════════════════════════════════════════════════
 
     def _connect_signals(self):
@@ -621,65 +948,68 @@ class MainWindow(QMainWindow):
     @pyqtSlot(str, str)
     def _on_log(self, level: str, message: str):
         ts = datetime.now().strftime('%H:%M:%S')
-        cmap = {'info': COLORS['text_dim'], 'warn': COLORS['warn'], 'error': COLORS['danger']}
-        c = cmap.get(level, COLORS['text_dim'])
+        cmap = {'info': COLORS['text_secondary'], 'warn': COLORS['warn'], 'error': COLORS['error']}
+        c = cmap.get(level, COLORS['text_secondary'])
         self.log_text.append(f'<span style="color:{c}">[{ts}] {message}</span>')
-
-        # 日志红点（折叠时）
         if not self.log_text.isVisible() and level in ('warn', 'error'):
             self._log_unread += 1
             self.log_badge.setText(str(min(self._log_unread, 99)))
             self.log_badge.setVisible(True)
 
     @pyqtSlot(str, dict)
+    def _on_check_timeout(self):
+        """检测超时 — 如果仍在检测页则跳转到错误页"""
+        if self.stack.currentIndex() == 0:
+            self.stack.setCurrentIndex(1)
+            self._set_status('err', '检测超时')
+            self.check_claude.set_error('超时')
+
+    @pyqtSlot(str, dict)
     def _on_status(self, state: str, data: dict):
         if state in ('init', 'checking-env'):
             self.stack.setCurrentIndex(0)
             self._set_status('warn', '检测中')
-            self.step_claude.set_active('检测中...')
+            self.check_claude.set_active()
+            # 30 秒检测超时
+            QTimer.singleShot(30000, self._on_check_timeout)
 
         elif state == 'env-ready':
             ver = data.get('version', '')
-            self.step_claude.set_done(ver)
-            self.step_weixin.set_active('连接中...')
+            self.check_claude.set_done(ver)
+            self.check_weixin.set_active('连接中...')
             self._set_status('warn', '等待连接')
-            # 更新设置页信息
-            self.info_labels['claude_ver'].setText(ver)
+            self.info_engine.set_value(f'{self.adapter.name} ({ver})')
 
         elif state == 'env-error':
             self.stack.setCurrentIndex(1)
             self._set_status('err', '环境异常')
-            self.step_claude.set_error('未找到')
-            self.btn_stop.setVisible(False)
-            self.btn_start.setVisible(False)
+            self.check_claude.set_error('未找到')
 
         elif state == 'need-login':
             self.stack.setCurrentIndex(2)
             self._set_status('warn', '等待扫码')
             self.qr_step1.set_active()
-            self.qr_step2 and None  # reset
-            self.qr_refresh_btn.setVisible(False)
 
         elif state == 'qr-ready':
             self.stack.setCurrentIndex(2)
             self._set_status('warn', '等待扫码')
             self.qr_step1.set_done()
-            self.qr_step2.set_active('等待扫码')
+            self.qr_step2.set_active()
 
         elif state == 'qr-scanned':
             self._set_status('warn', '已扫码')
-            self.qr_step2.set_done('已扫码')
-            self.qr_step3.set_active('请确认')
+            self.qr_step2.set_done()
+            self.qr_step3.set_active()
 
         elif state == 'connected':
-            # 先在检测页显示完成
-            self.step_weixin.set_done('已连接')
-            self.step_ready.set_done()
-            # 延迟切换到仪表盘（给用户看到"全绿"的感觉）
+            self.check_weixin.set_done('已连接')
+            self.check_ready.set_done()
             QTimer.singleShot(600, lambda: self._enter_running(data))
 
         elif state in ('disconnected', 'reconnecting'):
             self._set_status('warn', '重连中...')
+            self.btn_stop.setVisible(True)
+            self.btn_start.setVisible(True)   # 允许用户手动重连或停止
 
         elif state == 'stopped':
             self._set_status('off', '已停止')
@@ -693,50 +1023,50 @@ class MainWindow(QMainWindow):
         self.btn_stop.setVisible(True)
         self.btn_start.setVisible(False)
         self.start_time = time.time()
-        self.uptime_timer.start(10000)
+        self.uptime_timer.start(5000)  # 每5秒更新
         self._update_uptime()
-        # 设置页信息
+        QTimer.singleShot(1000, self._update_uptime)  # 1秒后再更新一次
         bot_id = data.get('bot_id', '')
-        self.info_labels['bot_id'].setText(bot_id[:20] + '...' if len(bot_id) > 20 else bot_id)
-        self.info_labels['connect_time'].setText(datetime.now().strftime('%Y-%m-%d %H:%M'))
+        self.info_bot_id.set_value(bot_id[:20] + '...' if len(bot_id) > 20 else bot_id)
+        self.info_time.set_value(datetime.now().strftime('%Y-%m-%d %H:%M'))
 
     @pyqtSlot(str)
     def _on_qr(self, qr_content: str):
-        img = qrcode.make(qr_content, image_factory=PilImage, box_size=6, border=2)
+        img = qrcode.make(qr_content, image_factory=PilImage, box_size=5, border=2)
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         pixmap = QPixmap()
         pixmap.loadFromData(buf.getvalue())
+        self._qr_placeholder.setVisible(False)
+        self.qr_label.setVisible(True)
         self.qr_label.setPixmap(pixmap.scaled(
-            240, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            200, 200, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     @pyqtSlot(str, str)
     def _on_message_in(self, user_id: str, text: str):
         self.message_count += 1
-        self.card_messages.set_value(str(self.message_count))
+        self._update_stat(self.stat_messages, str(self.message_count))
         users = self.engine.stats.get('active_users', set())
-        self.card_users.set_value(str(len(users) if isinstance(users, set) else 0))
-
+        self._update_stat(self.stat_users, str(len(users) if isinstance(users, set) else 0))
         ts = datetime.now().strftime('%H:%M')
         self.msg_list.append(
-            f'<p style="margin:2px 0"><span style="color:{COLORS["text_muted"]};font-size:11px">{ts}</span> '
-            f'<span style="color:{COLORS["info"]}">▼ 收</span> '
-            f'<span style="color:{COLORS["text_dim"]}">{user_id[:8]}</span> '
-            f'<span style="color:{COLORS["text"]}">{text[:120]}</span></p>'
+            f'<span style="color:{COLORS["text_tertiary"]};font-size:11px">{ts}</span> '
+            f'<span style="color:{COLORS["accent"]}">← 收</span> '
+            f'<span style="color:{COLORS["text_secondary"]}">{user_id[:6]}</span> '
+            f'{text[:120]}'
         )
-
-        # 通知（窗口隐藏时）
         if not self.isVisible():
-            self.tray.showMessage('新消息', f'{user_id[:8]}: {text[:50]}', QSystemTrayIcon.MessageIcon.Information, 3000)
+            self.tray.showMessage('新消息', f'{user_id[:6]}: {text[:50]}',
+                                  QSystemTrayIcon.MessageIcon.Information, 3000)
 
     @pyqtSlot(str, str)
     def _on_message_out(self, user_id: str, text: str):
         ts = datetime.now().strftime('%H:%M')
         self.msg_list.append(
-            f'<p style="margin:2px 0"><span style="color:{COLORS["text_muted"]};font-size:11px">{ts}</span> '
-            f'<span style="color:{COLORS["accent"]}">▲ 发</span> '
-            f'<span style="color:{COLORS["text_dim"]}">{user_id[:8]}</span> '
-            f'<span style="color:{COLORS["text"]}">{text[:120]}</span></p>'
+            f'<span style="color:{COLORS["text_tertiary"]};font-size:11px">{ts}</span> '
+            f'<span style="color:{COLORS["text_secondary"]}">→ 发</span> '
+            f'<span style="color:{COLORS["text_tertiary"]}">{user_id[:6]}</span> '
+            f'{text[:120]}'
         )
 
     # ══════════════════════════════════════════════════════════════════════
@@ -746,10 +1076,7 @@ class MainWindow(QMainWindow):
     def _start_bot(self):
         if self.bot_thread.isRunning():
             return
-        # 重置检测步骤
-        self.step_claude = self.step_claude  # already built
         self.stack.setCurrentIndex(0)
-
         self.engine = BotEngine(self.adapter)
         self._connect_signals()
         self.bot_thread = BotThread(self.engine)
@@ -763,60 +1090,308 @@ class MainWindow(QMainWindow):
     def _toggle_log(self):
         visible = not self.log_text.isVisible()
         self.log_text.setVisible(visible)
-        self.log_arrow.setText('▼' if visible else '▲')
+        self.log_arrow.setText('▾' if visible else '▸')
         if visible:
             self._log_unread = 0
             self.log_badge.setVisible(False)
 
+    def _navigate_to(self, view_index: int):
+        """带记忆的导航：跳转前记录当前视图"""
+        cur = self.stack.currentIndex()
+        if cur not in (4, 5):          # 只记录非设置/文件的主视图
+            self._prev_view = cur
+        self.stack.setCurrentIndex(view_index)
+
+    def _go_back(self):
+        """返回上一个主视图"""
+        self.stack.setCurrentIndex(self._prev_view)
+
     def _toggle_settings(self):
         if self.stack.currentIndex() == 4:
-            self.stack.setCurrentIndex(3)
+            self._go_back()
         else:
-            self.stack.setCurrentIndex(4)
+            self._navigate_to(4)
+
+    def _select_engine(self, engine_key: str):
+        """在设置页选中一个引擎"""
+        for key, cell in self._engine_cells.items():
+            info = ENGINES[key]
+            is_selected = (key == engine_key)
+            prefix = '● ' if is_selected else '○ '
+            cell._label.setText(f'{prefix}{info["label"]}')
+        self._engine_config['engine'] = engine_key
+        self._update_settings_visibility(engine_key)
+
+    def _toggle_apikey_visibility(self):
+        from PyQt6.QtWidgets import QLineEdit
+        if self._apikey_input.echoMode() == QLineEdit.EchoMode.Password:
+            self._apikey_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self._apikey_eye.setText('🔒')
+        else:
+            self._apikey_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self._apikey_eye.setText('👁')
+
+    def _update_settings_visibility(self, engine_key: str):
+        """根据引擎类型显示/隐藏 API Key 区域"""
+        needs_key = ENGINES.get(engine_key, {}).get('needs_api_key', False)
+        self._apikey_group.setVisible(needs_key)
+        # 提供商下拉只在纯 API 模式显示
+        self._provider_row.setVisible(engine_key == 'direct_api')
+        # OI 模型输入只在 Open Interpreter 模式显示
+        self._oi_model_row.setVisible(engine_key == 'open_interpreter')
+
+    def _on_provider_changed(self, index: int):
+        provider = self._provider_combo.itemData(index)
+        if provider:
+            self._engine_config['provider'] = provider
+
+    def _save_engine_config(self):
+        """保存引擎配置并重启 Bot"""
+        self._save_btn.setText('保存中...')
+        self._save_btn.setEnabled(False)
+
+        engine = self._engine_config.get('engine', 'claude_code')
+        self._engine_config['api_key'] = self._apikey_input.text().strip()
+
+        if engine == 'open_interpreter':
+            self._engine_config['model'] = self._oi_model_input.text().strip() or 'gpt-4o'
+        elif engine == 'direct_api':
+            self._engine_config['provider'] = self._provider_combo.currentData() or 'anthropic'
+
+        save_config(self._engine_config)
+
+        # 重建适配器并重启
+        self.adapter = create_adapter(engine, self._engine_config)
+        self.info_engine.set_value(self.adapter.name)
+        self._stop_bot()
+        self._save_btn.setText('已保存 ✓')
+        QTimer.singleShot(1000, lambda: self.stack.setCurrentIndex(0))
+        QTimer.singleShot(1500, self._start_bot)
+        QTimer.singleShot(2000, lambda: (
+            self._save_btn.setText('保存并重启 Bot'),
+            self._save_btn.setEnabled(True),
+        ))
 
     def _show_model_menu(self):
-        """点击模型卡片弹出切换菜单"""
         menu = QMenu(self)
-        menu.setStyleSheet(f"""
-            QMenu {{ background: {COLORS['bg_card']}; color: {COLORS['text']}; border: 1px solid {COLORS['border']}; padding: 4px; }}
-            QMenu::item {{ padding: 8px 24px; }}
-            QMenu::item:selected {{ background: {COLORS['accent']}; color: white; }}
-        """)
         current = self.engine.default_model
         for key, m in MODELS.items():
-            prefix = '● ' if key == current else '  '
+            prefix = '● ' if key == current else '   '
             action = menu.addAction(f'{prefix}{m["label"]} — {m["desc"]}')
-            action.setData(key)
             action.triggered.connect(lambda checked, k=key: self._switch_model(k))
-        menu.exec(self.card_model.mapToGlobal(self.card_model.rect().bottomLeft()))
+        menu.exec(self.stat_model.mapToGlobal(self.stat_model.rect().bottomLeft()))
 
     def _switch_model(self, key: str):
         self.engine.default_model = key
-        self.card_model.set_value(MODELS[key]['label'])
-        # 同步设置页下拉
-        for i in range(self.settings_model.count()):
-            if self.settings_model.itemData(i) == key:
-                self.settings_model.blockSignals(True)
-                self.settings_model.setCurrentIndex(i)
-                self.settings_model.blockSignals(False)
-                break
-
-    def _on_model_changed(self, index: int):
-        key = self.settings_model.itemData(index)
-        if key:
-            self._switch_model(key)
+        self._update_stat(self.stat_model, MODELS[key]['label'])
+        self.settings_model_cell.set_value(f'{MODELS[key]["label"]} — {MODELS[key]["desc"]}')
 
     def _browse_cwd(self):
         path = QFileDialog.getExistingDirectory(self, '选择工作目录', DEFAULT_CWD)
         if path:
-            self.settings_cwd_label.setText(path)
-            # 通知引擎（全局默认 CWD 更新）
+            self.settings_cwd_cell.set_value(path)
             from core import config
             config.DEFAULT_CWD = path
+            # 持久化到引擎配置
+            self._engine_config['cwd'] = path
+            save_config(self._engine_config)
 
     def _update_uptime(self):
         if self.start_time:
-            self.card_uptime.set_value(fmt_uptime(time.time() - self.start_time))
+            self._update_stat(self.stat_uptime, fmt_uptime(time.time() - self.start_time))
+
+    def _update_stat(self, widget: QWidget, value: str):
+        lbl = widget.findChild(QLabel, 'stat_value')
+        if lbl:
+            lbl.setText(value)
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  文件收件箱
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _refresh_files(self):
+        """扫描 .state/media/ 目录，刷新文件列表"""
+        from core.config import MEDIA_DIR
+        self.file_list.clear()
+        try:
+            files = sorted(MEDIA_DIR.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
+        except Exception:
+            files = []
+
+        for f in files:
+            if f.name.startswith('.') or not f.is_file():
+                continue
+            size = f.stat().st_size
+            if size < 1024:
+                size_str = f'{size}B'
+            elif size < 1024 * 1024:
+                size_str = f'{size / 1024:.1f}KB'
+            else:
+                size_str = f'{size / 1024 / 1024:.1f}MB'
+
+            # 时间
+            mtime = datetime.fromtimestamp(f.stat().st_mtime).strftime('%m-%d %H:%M')
+
+            item = QListWidgetItem(f'{f.name}\n{size_str} · {mtime}')
+            item.setData(Qt.ItemDataRole.UserRole, str(f))
+            self.file_list.addItem(item)
+
+        has_files = any(f.is_file() and not f.name.startswith('.') for f in files)
+        if not has_files:
+            item = QListWidgetItem()
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            item.setSizeHint(QSize(0, 120))
+            self.file_list.addItem(item)
+            # 空状态居中 widget
+            empty_w = QWidget()
+            el = QVBoxLayout(empty_w)
+            el.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            el.setSpacing(8)
+            ei = QLabel('📭')
+            ei.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ei.setStyleSheet('font-size: 36px; background: transparent;')
+            el.addWidget(ei)
+            et = QLabel('暂无文件')
+            et.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            et.setStyleSheet(f'font-size: 14px; color: {COLORS["text"]}; font-weight: 500; background: transparent;')
+            el.addWidget(et)
+            es = QLabel('微信发送的文件会出现在这里')
+            es.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            es.setStyleSheet(f'font-size: 12px; color: {COLORS["text_tertiary"]}; background: transparent;')
+            el.addWidget(es)
+            self.file_list.setItemWidget(item, empty_w)
+
+    def _open_file_item(self, item: QListWidgetItem):
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if path:
+            import subprocess
+            subprocess.Popen(['explorer', '/select,', path.replace('/', '\\')])
+
+    def _open_selected_file(self):
+        item = self.file_list.currentItem()
+        if item:
+            path = item.data(Qt.ItemDataRole.UserRole)
+            if path:
+                os.startfile(path)
+
+    def _save_file_as(self):
+        item = self.file_list.currentItem()
+        if not item:
+            return
+        src = item.data(Qt.ItemDataRole.UserRole)
+        if not src:
+            return
+        src_path = Path(src)
+        dest, _ = QFileDialog.getSaveFileName(self, '另存为', src_path.name)
+        if dest:
+            import shutil
+            shutil.copy2(src, dest)
+
+    def _send_file_dialog(self):
+        """从文件对话框选择文件发送到微信"""
+        path, _ = QFileDialog.getOpenFileName(self, '选择要发送的文件')
+        if path:
+            self._do_send_file(path)
+
+    def _do_send_file(self, file_path: str):
+        """发送文件到微信（给自己）"""
+        if not self.engine.account:
+            return
+        account = self.engine.account
+        # 发送给连接的用户（bot 自身的 userId）
+        user_id = account.get('userId', '')
+        if not user_id:
+            return
+        try:
+            from core import media as media_mod
+            from core import weixin_api
+            uploaded = media_mod.upload_media(
+                file_path, user_id, account['token'],
+                account.get('baseUrl', 'https://ilinkai.weixin.qq.com'))
+            item = media_mod.build_media_item(uploaded)
+            weixin_api.send_media_message(account['token'], user_id, item, None, Path(file_path).name)
+            self.engine.sig_log.emit('info', f'📤 已发送: {Path(file_path).name}')
+        except Exception as e:
+            self.engine.sig_log.emit('error', f'发送失败: {str(e)[:100]}')
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  拖拽发文件
+    # ══════════════════════════════════════════════════════════════════════
+
+    _drop_hint_normal_ss = f"""
+        QLabel {{
+            background: {COLORS['accent_light']};
+            color: {COLORS['accent']};
+            border: 2px dashed {COLORS['accent']};
+            border-radius: 8px;
+            margin: 12px;
+            font-size: 13px;
+        }}
+    """
+    _drop_hint_active_ss = f"""
+        QLabel {{
+            background: {COLORS['accent']};
+            color: white;
+            border: 2px solid {COLORS['accent']};
+            border-radius: 8px;
+            margin: 12px;
+            font-size: 13px;
+            font-weight: 600;
+        }}
+    """
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self._drop_hint.setStyleSheet(self._drop_hint_active_ss)
+            self._drop_hint.setText('松开发送文件')
+
+    def dragLeaveEvent(self, event):
+        self._drop_hint.setStyleSheet(self._drop_hint_normal_ss)
+        self._drop_hint.setText('将文件拖拽到此处\n发送到微信')
+
+    def dropEvent(self, event):
+        self._drop_hint.setStyleSheet(self._drop_hint_normal_ss)
+        self._drop_hint.setText('将文件拖拽到此处\n发送到微信')
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path and Path(path).is_file():
+                self._do_send_file(path)
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  开机自启
+    # ══════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def get_auto_start() -> bool:
+        """检查是否设置了开机自启"""
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r'Software\Microsoft\Windows\CurrentVersion\Run', 0, winreg.KEY_READ)
+            winreg.QueryValueEx(key, 'WeChatClaudeBot')
+            winreg.CloseKey(key)
+            return True
+        except (FileNotFoundError, OSError):
+            return False
+
+    @staticmethod
+    def set_auto_start(enabled: bool):
+        """设置/取消开机自启"""
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r'Software\Microsoft\Windows\CurrentVersion\Run', 0, winreg.KEY_SET_VALUE)
+        if enabled:
+            import sys
+            exe = sys.executable
+            script = str(Path(__file__).parent.parent / 'main.py')
+            winreg.SetValueEx(key, 'WeChatClaudeBot', 0, winreg.REG_SZ, f'"{exe}" "{script}"')
+        else:
+            try:
+                winreg.DeleteValue(key, 'WeChatClaudeBot')
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
 
     # ══════════════════════════════════════════════════════════════════════
     #  辅助
@@ -828,7 +1403,7 @@ class MainWindow(QMainWindow):
         self.tray.setToolTip(f'微信 Claude Bot — {text}')
 
     def _set_dot(self, dot_type: str):
-        c = {'off': '#555', 'on': COLORS['accent'], 'warn': COLORS['warn'], 'err': COLORS['danger']}.get(dot_type, '#555')
+        c = {'off': '#C8C8C8', 'on': COLORS['accent'], 'warn': COLORS['warn'], 'err': COLORS['error']}.get(dot_type, '#C8C8C8')
         self.status_dot.setStyleSheet(f'background: {c}; border-radius: 4px;')
 
     def _show_window(self):
@@ -847,5 +1422,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         event.ignore()
         self.hide()
-        self.tray.showMessage('微信 Claude Bot', '仍在后台运行，双击托盘图标打开',
-                              QSystemTrayIcon.MessageIcon.Information, 2000)
+        if not self._tray_hint_shown:
+            self._tray_hint_shown = True
+            self.tray.showMessage('微信 Claude Bot', '仍在后台运行，双击托盘图标打开',
+                                  QSystemTrayIcon.MessageIcon.Information, 2000)
