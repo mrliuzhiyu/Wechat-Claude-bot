@@ -12,6 +12,13 @@ import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+/** 构造干净的子进程环境变量（删除 CLAUDECODE 防止嵌套检测） */
+function cleanEnv() {
+  const env = { ...process.env };
+  delete env.CLAUDECODE;
+  return env;
+}
+
 // ── 状态管理 ─────────────────────────────────────────────────────────────────
 
 const sessions = new Map();   // userId → { sessionId, lastActive }
@@ -121,6 +128,7 @@ async function _doChat(userId, message, opts) {
   const args = [
     '-p',
     '--output-format', 'stream-json',
+    '--verbose',
     // 关键：赋予完整权限，让 Claude Code 能真正写代码、执行命令
     '--dangerously-skip-permissions',
   ];
@@ -147,10 +155,10 @@ async function _doChat(userId, message, opts) {
     activeProcesses++;
 
     const proc = spawn(bin, [...extraArgs, ...args], {
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
       shell,
       cwd: opts.cwd || undefined,
-      env: { ...process.env, CLAUDECODE: undefined },
+      env: cleanEnv(),
     });
 
     activeChildren.add(proc);
@@ -317,14 +325,14 @@ function resolveClaudeSpawn() {
   if (IS_WINDOWS) {
     try {
       // 找到 claude.cmd 路径
-      const result = execFileSync('where', ['claude'], {
+      const result = execFileSync('where', ['claude.cmd'], {
         encoding: 'utf-8',
         shell: true,
-        env: { ...process.env, CLAUDECODE: undefined },
+        env: cleanEnv(),
       }).trim();
-      const cmdPath = result.split('\n').map(l => l.trim()).find(l => l.endsWith('.cmd'));
+      const cmdPath = result.split('\n').map(l => l.trim()).filter(Boolean)[0];
       if (cmdPath) {
-        // claude.cmd 和 node_modules 在同一目录
+        // claude.cmd 和 node_modules 在同一目录（npm 全局安装目录）
         const dir = path.dirname(cmdPath);
         const cliJs = path.join(dir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
         if (fs.existsSync(cliJs)) {
@@ -342,7 +350,7 @@ function resolveClaudeSpawn() {
   try {
     const result = execFileSync('which', ['claude'], {
       encoding: 'utf-8',
-      env: { ...process.env, CLAUDECODE: undefined },
+      env: cleanEnv(),
     }).trim();
     _spawnCache = { bin: result || 'claude', extraArgs: [], shell: false };
   } catch {
@@ -357,7 +365,7 @@ export async function checkClaudeAvailable() {
     const result = execFileSync(bin, [...extraArgs, '--version'], {
       encoding: 'utf-8',
       shell,
-      env: { ...process.env, CLAUDECODE: undefined },
+      env: cleanEnv(),
     });
     return result.trim();
   } catch {
