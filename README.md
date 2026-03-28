@@ -1,4 +1,4 @@
-# 微信 Claude Code Bot
+# 微信 AI 助手
 
 <p align="center">
   <img src="docs/images/wechat-clawbot.jpg" alt="微信 ClawBot 官方连接" width="280" />
@@ -6,25 +6,27 @@
 </p>
 
 <p align="center">
-  <strong>通过微信远程控制本机 Claude Code CLI —— 随时随地用微信操控你的代码项目</strong>
+  <strong>通过微信远程操控你的电脑 —— 不只是聊天，AI 能真正读写文件、执行命令、修改代码</strong>
 </p>
 
 <p align="center">
   <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/stargazers"><img src="https://img.shields.io/github/stars/mrliuzhiyu/Wechat-Claude-bot?style=social" alt="GitHub Stars" /></a>
   <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/fork"><img src="https://img.shields.io/github/forks/mrliuzhiyu/Wechat-Claude-bot?style=social" alt="GitHub Forks" /></a>
   <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/issues"><img src="https://img.shields.io/github/issues/mrliuzhiyu/Wechat-Claude-bot" alt="Issues" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen" alt="Node.js" />
+  <img src="https://img.shields.io/badge/python-%3E%3D3.11-blue" alt="Python" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform" />
 </p>
 
 <p align="center">
-  <a href="#微信-claude-code-bot">中文</a> · <a href="docs/i18n/README_EN.md">English</a> · <a href="docs/i18n/README_JA.md">日本語</a> · <a href="docs/i18n/README_KO.md">한국어</a> · <a href="docs/i18n/README_RU.md">Русский</a> · <a href="docs/i18n/README_ES.md">Español</a> · <a href="docs/i18n/README_FR.md">Français</a> · <a href="docs/i18n/README_DE.md">Deutsch</a> · <a href="docs/i18n/README_PT.md">Português</a> · <a href="docs/i18n/README_AR.md">العربية</a>
+  <a href="#微信-ai-助手">中文</a> · <a href="docs/i18n/README_EN.md">English</a> · <a href="docs/i18n/README_JA.md">日本語</a> · <a href="docs/i18n/README_KO.md">한국어</a> · <a href="docs/i18n/README_RU.md">Русский</a> · <a href="docs/i18n/README_ES.md">Español</a> · <a href="docs/i18n/README_FR.md">Français</a> · <a href="docs/i18n/README_DE.md">Deutsch</a> · <a href="docs/i18n/README_PT.md">Português</a> · <a href="docs/i18n/README_AR.md">العربية</a>
 </p>
 
 <p align="center">
-  用户在微信中发消息 → 本机 Claude Code 处理 → 实时反馈回微信
+  微信发消息 → AI 操控你的电脑 → 结果发回微信
 </p>
+
+> **跟普通聊天机器人的区别？** CowAgent/QClaw 只能文字对话。本项目通过 Claude Code / Open Interpreter 让 AI **真正操作你的电脑**——读写文件、执行命令、修改代码、运行测试。Python 桌面客户端，支持多 AI 引擎，微信原生设计风格。
 
 ---
 

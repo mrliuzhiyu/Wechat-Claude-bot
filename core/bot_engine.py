@@ -135,6 +135,7 @@ class BotEngine(QObject):
     sig_qr = pyqtSignal(str)                  # (qr_content_url)
     sig_message_in = pyqtSignal(str, str)     # (user_id, text)
     sig_message_out = pyqtSignal(str, str)    # (user_id, text)
+    sig_action = pyqtSignal(str, str, str)    # (icon, description, detail)
 
     def __init__(self, adapter: ModelAdapter, parent=None):
         super().__init__(parent)
@@ -542,6 +543,10 @@ class BotEngine(QObject):
         self.last_progress[user_id] = {'t': text, 'ts': time.time()}
         self._send(token, user_id, text)
         self._log('info', f'  📊 {text}')
+        # 解析操作事件发给 GUI
+        icon = text[:2] if text else '🔧'
+        desc = text[2:].strip() if len(text) > 2 else text
+        self.sig_action.emit(icon, desc, user_id[:8])
 
     def _start_typing(self, account: dict, user_id: str, ctx: str | None):
         """启动 typing 指示，返回停止函数"""
