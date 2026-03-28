@@ -174,7 +174,8 @@ async function _doChat(userId, message, opts, retryCount = 0) {
     let toolUseCount = 0;
     let lastProgressTime = 0;
     const PROGRESS_THROTTLE_MS = 3000;
-    const writtenFiles = [];
+    const writtenFiles = [];   // Write 工具创建的文件
+    const readMediaFiles = []; // Read 工具读取的媒体文件（图片/视频/PDF等）
     let timedOut = false;
     let cleaned = false;
     let firstEventReceived = false;
@@ -220,9 +221,15 @@ async function _doChat(userId, message, opts, retryCount = 0) {
             // 关键：解析 tool_use 事件，实时反馈给用户
             if (block.type === 'tool_use') {
               toolUseCount++;
-              // 记录 Write 操作的文件路径（用于自动发送）
+              // 记录文件操作路径（用于自动发送）
               if (block.name === 'Write' && block.input?.file_path) {
                 writtenFiles.push(block.input.file_path);
+              }
+              if (block.name === 'Read' && block.input?.file_path) {
+                const ext = block.input.file_path.replace(/.*\./, '.').toLowerCase();
+                if (['.png','.jpg','.jpeg','.gif','.webp','.bmp','.mp4','.mov','.pdf','.doc','.docx','.xls','.xlsx','.csv','.zip','.mp3','.wav'].includes(ext)) {
+                  readMediaFiles.push(block.input.file_path);
+                }
               }
               const now = Date.now();
               if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
@@ -269,6 +276,7 @@ async function _doChat(userId, message, opts, retryCount = 0) {
         resolve({
           text: partial || '⏱️ Claude Code 处理超时（5分钟），请拆分成更小的步骤。',
           writtenFiles,
+          readMediaFiles,
         });
         return;
       }
@@ -293,6 +301,7 @@ async function _doChat(userId, message, opts, retryCount = 0) {
       resolve({
         text: getReplyText() || '(Claude Code 无响应)',
         writtenFiles,
+        readMediaFiles,
       });
     });
 

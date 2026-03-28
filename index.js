@@ -37,13 +37,9 @@ const WECHAT_SYSTEM_PROMPT = [
   '你正在通过微信与用户对话。回复显示在微信中（纯文本，不支持 Markdown）。',
   '保持简洁，适合手机。不要用 Markdown 语法。',
   '',
-  '【重要】发送文件给用户的方法：',
-  `把文件复制到发件箱目录，系统会自动发给用户：`,
-  `  cp 文件路径 ${OUTBOX_DIR.replace(/\\/g, '/')}/`,
-  '例如用户说"把图片发给我"：',
-  `  cp ./docs/images/photo.jpg ${OUTBOX_DIR.replace(/\\/g, '/')}/`,
-  '系统会自动发送发件箱中的所有文件并清理。',
-  '你用 Write 工具新建的文件（图片/PDF/文档等）也会自动发送，无需手动复制。',
+  '文件发送：当你用 Read 工具查看图片/PDF/文档等文件时，系统会自动把该文件发送给用户。',
+  '用户说"把文件发给我"时，直接用 Read 工具读取该文件即可，系统自动处理发送。',
+  '你用 Write 工具或 Bash 创建的新文件也会自动发送。',
   '',
   '工作时先简短说明你要做什么，让用户知道进展。',
 ].join('\n');
@@ -283,18 +279,24 @@ async function sendFileToUser(account, userId, filePath) {
 }
 
 /**
- * 自动发送文件给用户，三个来源：
- * 1. Write 工具跟踪的 writtenFiles（仅白名单扩展名）
- * 2. 回复文本中提取的绝对路径（仅白名单扩展名）
- * 3. 发件箱目录 .state/outbox/ 中的所有文件（不限类型）
+ * 自动发送文件给用户，四个来源：
+ * 1. Write 工具创建的文件（仅白名单扩展名）
+ * 2. Read 工具读取的媒体文件（图片/PDF等，Claude 读了就发）
+ * 3. 回复文本中提取的绝对路径（仅白名单扩展名）
+ * 4. 发件箱目录 .state/outbox/（不限类型）
  */
-async function autoSendFiles(account, userId, writtenFiles, replyText) {
+async function autoSendFiles(account, userId, writtenFiles, readMediaFiles, replyText) {
   const sent = new Set();
 
-  // 来源 1+2：Write 跟踪 + 回复文本提取（仅白名单扩展名）
+  // 来源 1+2+3：Write 跟踪 + Read 媒体 + 回复文本路径
   const fromReply = extractFilePathsFromReply(replyText || '');
-  const tracked = [...new Set([...(writtenFiles || []), ...fromReply])];
-  for (const filePath of tracked) {
+  const allTracked = [...new Set([
+    ...(writtenFiles || []),
+    ...(readMediaFiles || []),
+    ...fromReply,
+  ])];
+
+  for (const filePath of allTracked) {
     const ext = path.extname(filePath).toLowerCase();
     if (!AUTO_SEND_EXTS.has(ext)) continue;
     if (sent.has(filePath)) continue;
@@ -305,7 +307,7 @@ async function autoSendFiles(account, userId, writtenFiles, replyText) {
     }
   }
 
-  // 来源 3：发件箱（不限类型，Claude 显式放进来的都发）
+  // 来源 4：发件箱（不限类型）
   try {
     const outboxFiles = fs.readdirSync(OUTBOX_DIR).filter(f => !f.startsWith('.'));
     for (const name of outboxFiles) {
@@ -315,7 +317,6 @@ async function autoSendFiles(account, userId, writtenFiles, replyText) {
         const stat = fs.statSync(filePath);
         if (!stat.isFile()) continue;
         if (await sendFileToUser(account, userId, filePath)) sent.add(filePath);
-        // 发送后删除
         fs.unlinkSync(filePath);
       } catch (err) {
         log(`⚠️ 发件箱发送失败 ${name}: ${err.message.slice(0, 80)}`);
@@ -401,15 +402,15 @@ async function handleMessage(account, msg) {
       })
     );
 
-    const { text: reply, writtenFiles } = result;
+    const { text: reply, writtenFiles, readMediaFiles } = result;
 
     for (const chunk of splitMsg(md2wx(reply), MAX_REPLY_LENGTH)) {
       await send(account.token, from, chunk);
     }
     log(`🤖 ${sid(from)}: ${trunc(reply)} (${reply.length}字)`);
 
-    // 自动发送 Claude Code 创建的文件
-    await autoSendFiles(account, from, writtenFiles, reply);
+    // 自动发送文件（Write 创建的 + Read 读取的媒体 + 回复文本中的路径 + 发件箱）
+    await autoSendFiles(account, from, writtenFiles, readMediaFiles, reply);
   } catch (err) {
     const e = err.message;
     const errMsg = e.includes('超时') ? '⏱️ 超时了，试试拆分成更小的步骤。'
@@ -485,13 +486,13 @@ async function handleMediaMessage(account, msg) {
       })
     );
 
-    const { text: reply, writtenFiles } = result;
+    const { text: reply, writtenFiles, readMediaFiles } = result;
 
     for (const chunk of splitMsg(md2wx(reply), MAX_REPLY_LENGTH)) {
       await send(account.token, from, chunk);
     }
 
-    await autoSendFiles(account, from, writtenFiles, reply);
+    await autoSendFiles(account, from, writtenFiles, readMediaFiles, reply);
   } catch (err) {
     await send(account.token, from, `⚠️ 分析失败: ${err.message.slice(0, 150)}`);
   } finally {
