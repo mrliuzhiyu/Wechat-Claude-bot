@@ -145,6 +145,10 @@ async function _doChat(userId, message, opts) {
     args.push('--allowedTools', opts.allowedTools.join(','));
   }
 
+  if (opts.systemPrompt) {
+    args.push('--append-system-prompt', opts.systemPrompt);
+  }
+
   // 消息作为最后一个位置参数
   args.push(message);
 

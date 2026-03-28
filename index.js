@@ -21,6 +21,13 @@ dotenv.config();
 const CWD = process.env.CLAUDE_CWD || process.cwd();
 const MAX_REPLY_LENGTH = 4000;
 
+// 告诉 Claude Code 它运行在微信环境中
+const WECHAT_SYSTEM_PROMPT = [
+  '你正在通过微信与用户对话，回复会显示在微信中（纯文本，不支持 Markdown 渲染）。',
+  '保持回复简洁，适合手机阅读。',
+  '你无法直接发送文件/图片给用户。如果用户要求发送文件，请告知文件的完整路径，并提示用户在微信中发送 /send <路径> 来接收文件。',
+].join('\n');
+
 // ── 模型管理 ─────────────────────────────────────────────────────────────────
 
 const MODELS = {
@@ -206,6 +213,7 @@ async function handleMessage(account, msg) {
     const reply = await claude.chat(from, trimmed, {
       cwd: CWD,
       model: getModelId(getUserModel(from)),
+      systemPrompt: WECHAT_SYSTEM_PROMPT,
       onProgress: (pt) => {
         const last = lastProgress.get(from);
         if (last && last.t === pt && Date.now() - last.ts < 5000) return;
@@ -298,6 +306,7 @@ async function handleMediaMessage(account, msg) {
     const reply = await claude.chat(from, prompt, {
       cwd: CWD,
       model: getModelId(getUserModel(from)),
+      systemPrompt: WECHAT_SYSTEM_PROMPT,
       onProgress: (pt) => {
         const last = lastProgress.get(from);
         if (last && last.t === pt && Date.now() - last.ts < 5000) return;
