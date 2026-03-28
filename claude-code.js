@@ -174,7 +174,8 @@ async function _doChat(userId, message, opts) {
     let newSessionId = null;
     let toolUseCount = 0;
     let lastProgressTime = 0;
-    const PROGRESS_THROTTLE_MS = 3000; // 进度消息最少间隔 3 秒
+    const PROGRESS_THROTTLE_MS = 3000;
+    const writtenFiles = [];  // 记录 Claude Code 创建/写入的文件
 
     proc.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
@@ -206,6 +207,10 @@ async function _doChat(userId, message, opts) {
             // 关键：解析 tool_use 事件，实时反馈给用户
             if (block.type === 'tool_use') {
               toolUseCount++;
+              // 记录 Write 操作的文件路径（用于自动发送）
+              if (block.name === 'Write' && block.input?.file_path) {
+                writtenFiles.push(block.input.file_path);
+              }
               const now = Date.now();
               if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
                 const desc = describeToolUse(block.name, block.input);
@@ -259,7 +264,10 @@ async function _doChat(userId, message, opts) {
         session.lastActive = Date.now();
       }
 
-      resolve(getReplyText() || '(Claude Code 无响应)');
+      resolve({
+        text: getReplyText() || '(Claude Code 无响应)',
+        writtenFiles,
+      });
     });
 
     proc.on('error', (err) => {

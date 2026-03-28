@@ -24,8 +24,9 @@ const MAX_REPLY_LENGTH = 4000;
 // 告诉 Claude Code 它运行在微信环境中
 const WECHAT_SYSTEM_PROMPT = [
   '你正在通过微信与用户对话，回复会显示在微信中（纯文本，不支持 Markdown 渲染）。',
-  '保持回复简洁，适合手机阅读。',
-  '你无法直接发送文件/图片给用户。如果用户要求发送文件，请告知文件的完整路径，并提示用户在微信中发送 /send <路径> 来接收文件。',
+  '保持回复简洁，适合手机阅读。不要用 Markdown 语法。',
+  '当你用 Write 工具创建图片、PDF、文档等文件时，系统会自动发送给用户，无需额外操作。',
+  '对于已有的文件，告知用户完整路径并提示发送 /send <路径> 来接收。',
 ].join('\n');
 
 // ── 模型管理 ─────────────────────────────────────────────────────────────────
@@ -80,8 +81,12 @@ const COMMANDS = {
   },
   '/send': {
     handler: async (userId, args) => {
-      const filePath = args.trim();
-      if (!filePath) return '用法: /send <文件路径>\n例如: /send C:\\project\\output.png';
+      // 支持 /send 路径 | 说明文字
+      const pipeIdx = args.indexOf('|');
+      const filePath = (pipeIdx > 0 ? args.slice(0, pipeIdx) : args).trim();
+      const caption = pipeIdx > 0 ? args.slice(pipeIdx + 1).trim() : '';
+
+      if (!filePath) return '用法: /send <文件路径>\n带说明: /send 路径 | 说明文字\n例如: /send C:\\output.png | 处理结果';
       if (!fs.existsSync(filePath)) return `❌ 文件不存在: ${filePath}`;
       const stat = fs.statSync(filePath);
       if (stat.isDirectory()) return '❌ 不能发送文件夹';
@@ -91,10 +96,13 @@ const COMMANDS = {
       try {
         const account = currentAccount;
         if (!account) return '❌ 未连接微信';
-        const ctx = ctxTokens.get(userId);
+        const ctx = ctxTokens.get(userId)?.token;
+        if (stat.size > 5 * 1024 * 1024) {
+          await send(account.token, userId, `📤 正在发送 ${path.basename(filePath)} (${(stat.size / 1024 / 1024).toFixed(1)}MB)...`);
+        }
         const uploaded = await media.uploadMedia(filePath, userId, account.token, account.baseUrl || 'https://ilinkai.weixin.qq.com');
         const item = media.buildMediaItem(uploaded);
-        await weixin.sendMediaMessage(account.token, userId, item, ctx);
+        await weixin.sendMediaMessage(account.token, userId, item, ctx, caption || undefined);
         return `✅ 已发送: ${path.basename(filePath)}`;
       } catch (err) {
         return `❌ 发送失败: ${err.message.slice(0, 150)}`;
@@ -103,14 +111,16 @@ const COMMANDS = {
   },
   '/help': {
     handler: async (userId) => [
-      '/new — 重置对话',
-      '/model — 切换模型 (sonnet/opus/haiku)',
-      '/send <路径> — 发送本机文件到微信',
-      '/status — 查看状态',
+      '命令:',
+      '  /new — 重置对话',
+      '  /model — 切换模型 (sonnet/opus/haiku)',
+      '  /send <路径> — 发送本机文件到微信',
+      '  /send <路径> | 说明 — 带说明发送',
+      '  /status — 查看状态',
       '',
-      '支持接收: 文字、语音、图片、文件',
-      `模型: ${MODELS[getUserModel(userId)].label}`,
-      `目录: ${CWD}`,
+      '支持接收: 文字、语音、图片、文件、视频',
+      'Claude 创建的文件会自动发送给你',
+      `模型: ${MODELS[getUserModel(userId)].label} | 目录: ${CWD}`,
     ].join('\n'),
   },
   '/status': {
@@ -173,63 +183,142 @@ function splitMsg(text, max) {
     : chunks;
 }
 
-// ── 消息处理 ─────────────────────────────────────────────────────────────────
+// ── 工具函数 ─────────────────────────────────────────────────────────────────
 
-const ctxTokens = new Map();
+const ctxTokens = new Map();    // userId → { token, ts }
 const lastProgress = new Map();
 const userBusy = new Set();
+
+/** 自动发送的文件类型白名单 */
+const AUTO_SEND_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp',
+  '.mp4', '.mov',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.csv', '.txt', '.zip', '.rar', '.7z',
+  '.mp3', '.wav', '.html',
+]);
+
+/** 包裹异步操作，自动管理 typing 状态指示 */
+async function withTyping(account, userId, contextToken, fn) {
+  let typingIv = null;
+  let stopped = false;
+  const stop = () => { stopped = true; if (typingIv) { clearInterval(typingIv); typingIv = null; } };
+
+  weixin.getConfig(account.token, userId, contextToken).then(cfg => {
+    if (stopped || !cfg.typingTicket) return;
+    weixin.sendTyping(account.token, userId, cfg.typingTicket);
+    typingIv = setInterval(() => weixin.sendTyping(account.token, userId, cfg.typingTicket), 5000);
+  }).catch(() => {});
+
+  try {
+    return await fn();
+  } finally {
+    stop();
+  }
+}
+
+/** 自动发送 Claude Code 创建的文件给用户 */
+async function autoSendFiles(account, userId, writtenFiles) {
+  if (!writtenFiles?.length) return;
+  for (const filePath of writtenFiles) {
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const ext = path.extname(filePath).toLowerCase();
+      if (!AUTO_SEND_EXTS.has(ext)) continue;
+      const stat = fs.statSync(filePath);
+      if (stat.size === 0 || stat.size > 50 * 1024 * 1024) continue;
+
+      const ctx = ctxTokens.get(userId)?.token;
+      const uploaded = await media.uploadMedia(filePath, userId, account.token, account.baseUrl || 'https://ilinkai.weixin.qq.com');
+      const item = media.buildMediaItem(uploaded);
+      await weixin.sendMediaMessage(account.token, userId, item, ctx, path.basename(filePath));
+      log(`📤 ${sid(userId)}: 自动发送 ${path.basename(filePath)}`);
+    } catch (err) {
+      log(`⚠️ 自动发送失败 ${path.basename(filePath)}: ${err.message.slice(0, 80)}`);
+    }
+  }
+}
+
+/** 根据文件类型生成智能 prompt */
+function buildMediaPrompt(type, filePath, originalName) {
+  const name = originalName || path.basename(filePath);
+  const ext = path.extname(name).toLowerCase();
+
+  if (type === 'image') {
+    return `用户发来一张图片，已保存到: ${filePath}\n请用 Read 工具查看并描述这张图片的内容。`;
+  }
+  if (type === 'video') {
+    return `用户发来一个视频，已保存到: ${filePath}\n请用 Bash 工具尝试运行 ffprobe（如果可用）获取视频时长、分辨率等元数据。如果 ffprobe 不可用，告知用户视频已保存并询问需要做什么。`;
+  }
+  if (ext === '.pdf') {
+    return `用户发来 PDF 文档 "${name}"，已保存到: ${filePath}\n请用 Read 工具读取并总结文档要点。如果包含表格，提取关键数据。`;
+  }
+  if (ext === '.csv' || ext === '.xls' || ext === '.xlsx') {
+    return `用户发来数据文件 "${name}"，已保存到: ${filePath}\n请读取并分析数据：描述列名、行数、关键统计信息或规律。`;
+  }
+  if (['.js', '.ts', '.py', '.java', '.go', '.rs', '.c', '.cpp', '.h', '.rb', '.php', '.swift', '.kt'].includes(ext)) {
+    return `用户发来代码文件 "${name}"，已保存到: ${filePath}\n请读取代码，解释功能并指出潜在问题或改进建议。`;
+  }
+  if (['.txt', '.md', '.log', '.json', '.yaml', '.yml', '.xml', '.toml', '.ini', '.conf'].includes(ext)) {
+    return `用户发来文本文件 "${name}"，已保存到: ${filePath}\n请读取并总结内容。`;
+  }
+  if (['.zip', '.rar', '.7z', '.tar', '.gz'].includes(ext)) {
+    return `用户发来压缩包 "${name}"，已保存到: ${filePath}\n请告知用户文件已保存，并询问是否需要解压或做其他处理。`;
+  }
+  return `用户发来文件 "${name}"，已保存到: ${filePath}\n请读取并分析这个文件的内容。`;
+}
+
+// ── 消息处理 ─────────────────────────────────────────────────────────────────
 
 async function handleMessage(account, msg) {
   const { from, text, contextToken } = msg;
   const trimmed = text.trim();
-  if (contextToken) ctxTokens.set(from, contextToken);
+  if (contextToken) ctxTokens.set(from, { token: contextToken, ts: Date.now() });
   if (!trimmed) return;
 
-  log(`👤 ${sid(from)}: ${trunc(trimmed)}`);
+  // 语音来源标注
+  const isVoice = msg.source === 'voice';
+  log(`👤 ${sid(from)}${isVoice ? '🎤' : ''}: ${trunc(trimmed)}`);
 
   // 斜杠命令
   const sp = trimmed.indexOf(' ');
   const cmd = (sp > 0 ? trimmed.slice(0, sp) : trimmed).toLowerCase();
-  const args = sp > 0 ? trimmed.slice(sp + 1) : '';
+  const cmdArgs = sp > 0 ? trimmed.slice(sp + 1) : '';
   if (COMMANDS[cmd]) {
-    await send(account.token, from, await COMMANDS[cmd].handler(from, args));
+    await send(account.token, from, await COMMANDS[cmd].handler(from, cmdArgs));
     return;
   }
 
   userBusy.add(from);
 
-  // typing：用共享变量追踪 interval，确保一定能清理
-  let typingIv = null;
-  let typingStopped = false;
-  const stopTyping = () => { typingStopped = true; if (typingIv) { clearInterval(typingIv); typingIv = null; } };
-
-  weixin.getConfig(account.token, from, contextToken).then(cfg => {
-    if (typingStopped || !cfg.typingTicket) return;
-    weixin.sendTyping(account.token, from, cfg.typingTicket);
-    typingIv = setInterval(() => weixin.sendTyping(account.token, from, cfg.typingTicket), 5000);
-  }).catch(() => {});
-
   try {
-    const reply = await claude.chat(from, trimmed, {
-      cwd: CWD,
-      model: getModelId(getUserModel(from)),
-      systemPrompt: WECHAT_SYSTEM_PROMPT,
-      onProgress: (pt) => {
-        const last = lastProgress.get(from);
-        if (last && last.t === pt && Date.now() - last.ts < 5000) return;
-        lastProgress.set(from, { t: pt, ts: Date.now() });
-        send(account.token, from, pt).catch(() => {});
-        log(`  📊 ${pt}`);
-      },
-    });
+    const prompt = isVoice ? `(用户通过语音输入，以下为语音转文字，可能有错字) ${trimmed}` : trimmed;
 
-    stopTyping();
+    const result = await withTyping(account, from, contextToken, () =>
+      claude.chat(from, prompt, {
+        cwd: CWD,
+        model: getModelId(getUserModel(from)),
+        systemPrompt: WECHAT_SYSTEM_PROMPT,
+        onProgress: (pt) => {
+          const last = lastProgress.get(from);
+          if (last && last.t === pt && Date.now() - last.ts < 5000) return;
+          lastProgress.set(from, { t: pt, ts: Date.now() });
+          send(account.token, from, pt).catch(() => {});
+          log(`  📊 ${pt}`);
+        },
+      })
+    );
+
+    const { text: reply, writtenFiles } = result;
+
     for (const chunk of splitMsg(md2wx(reply), MAX_REPLY_LENGTH)) {
       await send(account.token, from, chunk);
     }
     log(`🤖 ${sid(from)}: ${trunc(reply)} (${reply.length}字)`);
+
+    // 自动发送 Claude Code 创建的文件
+    await autoSendFiles(account, from, writtenFiles);
   } catch (err) {
-    stopTyping();
     const e = err.message;
     const errMsg = e.includes('超时') ? '⏱️ 超时了，试试拆分成更小的步骤。'
       : e.includes('无法启动') ? '❌ Claude Code 未运行。'
@@ -237,23 +326,23 @@ async function handleMessage(account, msg) {
     await send(account.token, from, errMsg);
     log(`❌ ${sid(from)}: ${e}`);
   } finally {
-    stopTyping(); // 兜底：无论如何都清理
     userBusy.delete(from);
     lastProgress.delete(from);
   }
 }
 
 async function handleMediaMessage(account, msg) {
-  if (msg.contextToken) ctxTokens.set(msg.from, msg.contextToken);
+  if (msg.contextToken) ctxTokens.set(msg.from, { token: msg.contextToken, ts: Date.now() });
   const { from, type } = msg;
 
   if (type === 'voice_no_text') {
-    await send(account.token, from, '📎 语音未转文字，请开启微信语音转文字后重试。');
+    await send(account.token, from, '🎤 语音未转文字。请开启微信「语音转文字」功能，或直接打字发送。');
     return;
   }
 
   // 下载媒体到本地
   let filePath = null;
+  let originalName = '';
   let desc = '';
   try {
     if (type === 'image' && msg.imageItem) {
@@ -261,7 +350,7 @@ async function handleMediaMessage(account, msg) {
       desc = '图片';
     } else if (type === 'file' && msg.fileItem) {
       const r = await media.downloadFile(msg.fileItem);
-      if (r) { filePath = r.filePath; desc = `文件 ${r.originalName}`; }
+      if (r) { filePath = r.filePath; originalName = r.originalName; desc = `文件 ${r.originalName}`; }
     } else if (type === 'video' && msg.videoItem) {
       filePath = await media.downloadVideo(msg.videoItem);
       desc = '视频';
@@ -279,51 +368,36 @@ async function handleMediaMessage(account, msg) {
 
   log(`📎 ${sid(from)}: 收到${desc} → ${filePath}`);
 
-  // 视频：Claude Code 无法分析视频内容，只告知保存路径
-  if (type === 'video') {
-    await send(account.token, from, `📹 视频已保存到: ${filePath}\n(视频内容无法直接分析，如需处理请用 /send 发回或告诉我你想做什么)`);
-    return;
-  }
-
-  // 图片/文件：传给 Claude Code 分析
+  // 所有媒体类型都交给 Claude Code 处理（包括视频用 ffprobe 提取元数据）
   userBusy.add(from);
 
-  // typing
-  let typingIv = null;
-  let typingStopped = false;
-  const stopTyping = () => { typingStopped = true; if (typingIv) { clearInterval(typingIv); typingIv = null; } };
-  weixin.getConfig(account.token, from, msg.contextToken).then(cfg => {
-    if (typingStopped || !cfg.typingTicket) return;
-    weixin.sendTyping(account.token, from, cfg.typingTicket);
-    typingIv = setInterval(() => weixin.sendTyping(account.token, from, cfg.typingTicket), 5000);
-  }).catch(() => {});
-
   try {
-    const prompt = type === 'image'
-      ? `用户发来了一张图片，已保存到: ${filePath}\n请用 Read 工具查看并描述这张图片。`
-      : `用户发来了${desc}，已保存到: ${filePath}\n请读取并分析这个文件的内容。`;
+    const prompt = buildMediaPrompt(type, filePath, originalName);
 
-    const reply = await claude.chat(from, prompt, {
-      cwd: CWD,
-      model: getModelId(getUserModel(from)),
-      systemPrompt: WECHAT_SYSTEM_PROMPT,
-      onProgress: (pt) => {
-        const last = lastProgress.get(from);
-        if (last && last.t === pt && Date.now() - last.ts < 5000) return;
-        lastProgress.set(from, { t: pt, ts: Date.now() });
-        send(account.token, from, pt).catch(() => {});
-      },
-    });
+    const result = await withTyping(account, from, msg.contextToken, () =>
+      claude.chat(from, prompt, {
+        cwd: CWD,
+        model: getModelId(getUserModel(from)),
+        systemPrompt: WECHAT_SYSTEM_PROMPT,
+        onProgress: (pt) => {
+          const last = lastProgress.get(from);
+          if (last && last.t === pt && Date.now() - last.ts < 5000) return;
+          lastProgress.set(from, { t: pt, ts: Date.now() });
+          send(account.token, from, pt).catch(() => {});
+        },
+      })
+    );
 
-    stopTyping();
+    const { text: reply, writtenFiles } = result;
+
     for (const chunk of splitMsg(md2wx(reply), MAX_REPLY_LENGTH)) {
       await send(account.token, from, chunk);
     }
+
+    await autoSendFiles(account, from, writtenFiles);
   } catch (err) {
-    stopTyping();
     await send(account.token, from, `⚠️ 分析失败: ${err.message.slice(0, 150)}`);
   } finally {
-    stopTyping();
     userBusy.delete(from);
     lastProgress.delete(from);
   }
@@ -331,7 +405,7 @@ async function handleMediaMessage(account, msg) {
 
 async function send(token, to, text) {
   try {
-    await weixin.sendMessage(token, to, text, ctxTokens.get(to));
+    await weixin.sendMessage(token, to, text, ctxTokens.get(to)?.token);
   } catch (err) {
     log(`⚠️ 发送失败: ${err.message.slice(0, 80)}`);
   }

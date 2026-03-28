@@ -282,7 +282,7 @@ function parseMessage(msg) {
       case MSG_TYPE.VOICE:
         // 语音转文字
         if (item.voice_item?.text) {
-          return { ...base, type: 'text', text: item.voice_item.text };
+          return { ...base, type: 'text', text: item.voice_item.text, source: 'voice' };
         }
         // 没有转文字的语音
         return { ...base, type: 'voice_no_text' };
