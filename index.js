@@ -32,7 +32,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTBOX_DIR = path.join(__dirname, '.state', 'outbox');
 fs.mkdirSync(OUTBOX_DIR, { recursive: true });
 
-// 告诉 Claude Code 它运行在微信环境中
+// 告诉 Claude Code 它运行在微信环境中（不包含任何硬编码路径，适配所有系统）
 const WECHAT_SYSTEM_PROMPT = [
   '你正在通过微信与用户对话。回复显示在微信中（纯文本，不支持 Markdown）。',
   '保持简洁，适合手机。不要用 Markdown 语法。',
@@ -128,11 +128,12 @@ const COMMANDS = {
     handler: async (userId, args) => {
       const target = args.trim();
       if (!target) return `当前工作目录: ${getCwd(userId)}\n\n切换: /cwd <路径>\n例如: /cwd D:\\projects\\my-app`;
-      if (!fs.existsSync(target)) return `❌ 目录不存在: ${target}`;
-      if (!fs.statSync(target).isDirectory()) return `❌ 不是目录: ${target}`;
-      userCwd.set(userId, target);
-      claude.clearSession(userId); // 切换目录要重置会话
-      return `✅ 工作目录切换到: ${target}\n对话已重置。`;
+      const resolved = path.resolve(target); // 相对路径 → 绝对路径
+      if (!fs.existsSync(resolved)) return `❌ 目录不存在: ${resolved}`;
+      if (!fs.statSync(resolved).isDirectory()) return `❌ 不是目录: ${resolved}`;
+      userCwd.set(userId, resolved);
+      claude.clearSession(userId);
+      return `✅ 工作目录切换到: ${resolved}\n对话已重置。`;
     },
   },
   '/help': {
@@ -246,14 +247,13 @@ async function withTyping(account, userId, contextToken, fn) {
 
 /**
  * 从 Claude 回复文本中提取可能的文件路径
- * 覆盖 Bash 工具生成的文件（Write 工具已通过 writtenFiles 跟踪）
+ * 支持 Windows 和 Unix 绝对路径
  */
 function extractFilePathsFromReply(text) {
   const paths = [];
-  // 匹配 Windows 和 Unix 绝对路径
   const patterns = [
-    /[A-Z]:\\[\w\\.\-\s]+\.(\w{2,5})/gi,      // C:\path\file.ext
-    /\/(?:home|tmp|var|Users|opt)\/[\w/.\-]+\.(\w{2,5})/g,  // /home/user/file.ext
+    /[A-Z]:\\(?:[\w\u4e00-\u9fff.\-\s]+\\)*[\w\u4e00-\u9fff.\-\s]+\.\w{2,5}/gi,  // Windows: C:\任意\路径.ext
+    /\/(?:[\w\u4e00-\u9fff.\-]+\/)+[\w\u4e00-\u9fff.\-]+\.\w{2,5}/g,              // Unix: /任意/路径.ext
   ];
   for (const pat of patterns) {
     let m;
@@ -261,11 +261,18 @@ function extractFilePathsFromReply(text) {
       paths.push(m[0].trim());
     }
   }
-  return [...new Set(paths)]; // 去重
+  return [...new Set(paths)];
+}
+
+/** 解析文件路径（相对路径 → 基于用户 CWD 的绝对路径） */
+function resolveFilePath(filePath, userId) {
+  if (path.isAbsolute(filePath)) return filePath;
+  return path.resolve(getCwd(userId), filePath);
 }
 
 /** 发送单个文件给用户 */
 async function sendFileToUser(account, userId, filePath) {
+  filePath = resolveFilePath(filePath, userId);
   if (!fs.existsSync(filePath)) return false;
   const stat = fs.statSync(filePath);
   if (stat.size === 0 || stat.size > 50 * 1024 * 1024) return false;
