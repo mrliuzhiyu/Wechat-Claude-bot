@@ -116,8 +116,10 @@ async function _doChat(userId, message, opts) {
   const isExpired = session && (now - session.lastActive > SESSION_EXPIRE_MS);
   const sessionId = (!isExpired && session?.sessionId) || null;
 
+  // Windows cmd.exe 会破坏 -p 参数中的中文字符
+  // 解决：消息通过 stdin 管道传入（echo msg | claude -p），绕过 cmd.exe 编码
   const args = [
-    '-p', message,
+    '-p',
     '--output-format', 'stream-json',
     '--verbose',
     // 关键：赋予完整权限，让 Claude Code 能真正写代码、执行命令
@@ -148,6 +150,10 @@ async function _doChat(userId, message, opts) {
       cwd: opts.cwd || undefined,
       env: { ...process.env, CLAUDECODE: undefined },
     });
+
+    // 通过 stdin 传入用户消息，绕过 Windows cmd.exe 编码破坏
+    proc.stdin.write(message);
+    proc.stdin.end();
 
     activeChildren.add(proc);
 
