@@ -29,7 +29,7 @@ const MODELS = {
   haiku:  { id: 'claude-haiku-4-5',  label: 'Haiku',  desc: '最快' },
 };
 
-let defaultModel = 'sonnet';
+let defaultModel = 'haiku';
 let currentAccount = null; // 当前微信连接，供 /send 等命令使用
 const userModels = new Map(); // 每用户可独立切换
 
