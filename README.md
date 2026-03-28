@@ -10,6 +10,15 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/stargazers"><img src="https://img.shields.io/github/stars/mrliuzhiyu/Wechat-Claude-bot?style=social" alt="GitHub Stars" /></a>
+  <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/fork"><img src="https://img.shields.io/github/forks/mrliuzhiyu/Wechat-Claude-bot?style=social" alt="GitHub Forks" /></a>
+  <a href="https://github.com/mrliuzhiyu/Wechat-Claude-bot/issues"><img src="https://img.shields.io/github/issues/mrliuzhiyu/Wechat-Claude-bot" alt="Issues" /></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen" alt="Node.js" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform" />
+</p>
+
+<p align="center">
   <a href="#微信-claude-code-bot">中文</a> · <a href="docs/i18n/README_EN.md">English</a> · <a href="docs/i18n/README_JA.md">日本語</a> · <a href="docs/i18n/README_KO.md">한국어</a> · <a href="docs/i18n/README_RU.md">Русский</a> · <a href="docs/i18n/README_ES.md">Español</a> · <a href="docs/i18n/README_FR.md">Français</a> · <a href="docs/i18n/README_DE.md">Deutsch</a> · <a href="docs/i18n/README_PT.md">Português</a> · <a href="docs/i18n/README_AR.md">العربية</a>
 </p>
 
