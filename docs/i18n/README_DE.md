@@ -68,45 +68,43 @@
 
 ## Warum nicht OpenClaw direkt verwenden?
 
-WeChats offizielles [OpenClaw](https://github.com/nicepkg/openclaw) ist ein Framework zum lokalen Ausführen von KI-Modellen. Mächtig, aber mit klaren Problemen:
+WeChats offizielles [OpenClaw](https://github.com/nicepkg/openclaw) ist ein umfangreiches KI-Agenten-Framework mit Unterstützung für mehrere Modelle und Plugins. Eine vollständige Plattformlösung für Szenarien mit anpassbaren KI-Fähigkeiten.
 
-### OpenClaws Probleme
+Aber wenn dein Ziel ist, **lokales Claude Code über WeChat fernzusteuern**, ist OpenClaw nicht optimal:
 
-- **Extremer Token-Verbrauch** — Ruft die Claude-API direkt auf, Abrechnung pro Token. Komplexe Gespräche verbrauchen leicht Zehntausende Token
-- **Komplexe Installation** — Framework + API-Key + Parameter + Abhängigkeitskonflikte lösen
-- **Hoher Wartungsaufwand** — Häufige Updates, komplexe Abhängigkeitsketten, Kompatibilitätsprobleme
-- **Nur Chat** — Selbst konfiguriert ist es ein Text-Chatbot, ohne Computerkontrolle
+### Leicht vs schwer
 
-### Vorteile dieses Projekts
+| Dimension | OpenClaw | Dieses Projekt |
+|-----------|----------|----------------|
+| **Zweck** | Universelles KI-Framework, mehrere Modelle und Plugins | Eine Sache: WeChat mit Claude Code CLI verbinden |
+| **Installation** | Framework + API-Key + Modellconfig + Plugins + Abhängigkeiten | **3 Schritte**: `git clone` → `npm install` → `npm start` |
+| **Abhängigkeiten** | Massives Framework, zahlreiche Abhängigkeiten | **Nur 2** (dotenv + qrcode-terminal) |
+| **Wartung** | Häufige Updates, Kompatibilitätsprobleme | Fast null, einfacher und transparenter Code |
+| **Code** | Tausende Dateien | **4 Kerndateien**, ~1000 Zeilen |
 
-Dieses Projekt **verwendet nicht das OpenClaw-Framework**. Es verbindet direkt das WeChat iLink Bot-Protokoll + lokales Claude Code CLI:
+### Token-Kosten
 
-| Dimension | Direktes OpenClaw | Dieses Projekt |
-|-----------|-------------------|----------------|
-| **Token-Kosten** | API-Token pro Gespräch | **Null Extra-Token**. Claude Code CLI Abo-Kontingent |
-| **Installation** | Framework + API-Key + Abhängigkeiten | **3 Schritte**: `git clone` → `npm install` → `npm start` |
-| **Wartung** | Häufige Updates, Konflikte | **Null Wartung**. Nur 2 leichte Abhängigkeiten |
-| **Fähigkeiten** | Nur Text-Chat | **Volle PC-Kontrolle**: Dateien, Befehle, Git |
-| **Projektzugang** | Kein Dateisystemzugriff | Arbeitet direkt am echten Projektcode |
-| **Befehle** | Nicht unterstützt | Jeder Terminal-Befehl |
-| **Kontext** | Nur Chat-Text | Gesamtes Projektverzeichnis |
-| **Werkzeuge** | Keine | 10+ eingebaute Werkzeuge |
-| **Fortschritt** | Keiner | Echtzeit pro Operation |
-| **Medien** | Begrenzt | Bilder/Dateien/Videos + `/send` |
-| **Modelle** | Config ändern + Neustart | `/model` zum sofortigen Wechsel |
-| **Code** | Massives Framework | **3 Kerndateien** |
+| | OpenClaw | Dieses Projekt |
+|-|----------|----------------|
+| **Abrechnung** | Claude API pro Gespräch, Token-basiert | Lokales Claude Code CLI, Abo-Kontingent |
+| **Kosten** | Lange Gespräche und Code-Analyse verbrennen Token schnell | **Null Extra-Token-Kosten** |
+| **API-Key** | Erforderlich | Nicht nötig |
+
+### Einzigartige Claude-Code-Fähigkeiten
+
+Claude Code CLI bietet **Fähigkeiten, die reine API-Aufrufe nicht replizieren können**: volle PC-Kontrolle, projektweiter Kontext, 10+ eingebaute Werkzeuge (Read, Write, Edit, Bash, Glob, Grep...), echte Code-Operationen mit sofortiger Wirkung, Echtzeit-Fortschritt und persistente Sessions.
 
 ### In einem Satz
 
-> **OpenClaw** = Schweres Framework + bezahlte API + nur Chat
+> **OpenClaw** = Vollständiges KI-Framework für allgemeine Szenarien — aber schwer, teuer und komplex
 >
-> **Dieses Projekt** = 3 Dateien + null Extrakosten + KI-Programmierer fernsteuern
+> **Dieses Projekt** = 4 Dateien, null Extrakosten, ein Ziel: Claude Code über WeChat fernsteuern
 
-### Wann was verwenden?
+### Wann was?
 
-- Wenn du **nur mit KI in WeChat chatten** willst → OpenClaw geht (aber Token kosten)
-- Wenn du **deinen PC fernsteuern, Code ändern, Befehle ausführen** willst → dieses Projekt
-- Wenn du **ein Claude Code-Abo** hast → WeChat-Fernsteuerung ohne Zusatzkosten
+- **Universeller KI-WeChat-Bot** mit mehreren Modellen → OpenClaw
+- **PC, Code und Befehle über WeChat fernsteuern** → dieses Projekt
+- **Bereits Claude-Code-Abo** → dieses Projekt (null Zusatzkosten)
 
 ---
 
