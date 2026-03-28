@@ -317,7 +317,8 @@ export async function uploadMedia(filePath, toUserId, token, baseUrl) {
  * 构建媒体消息的 item_list
  */
 export function buildMediaItem(uploaded) {
-  const aesKeyBase64 = Buffer.from(uploaded.aeskey, 'hex').toString('base64');
+  // aes_key 格式：hex 字符串的 base64 编码（不是 raw bytes 的 base64）
+  const aesKeyBase64 = Buffer.from(uploaded.aeskey).toString('base64');
   const mediaRef = {
     encrypt_query_param: uploaded.downloadParam,
     aes_key: aesKeyBase64,
