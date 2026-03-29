@@ -6,9 +6,11 @@
 
 import math
 import os
+import re
 import time
 import base64
 import struct
+import hashlib
 import logging
 from pathlib import Path
 
@@ -174,7 +176,6 @@ def download_file(file_item: dict) -> dict | None:
     buf = download_and_decrypt(media_info['encrypt_query_param'], media_info['aes_key'])
     MEDIA_DIR.mkdir(exist_ok=True)
     orig_name = file_item.get('file_name', 'file.bin')
-    import re
     safe_name = re.sub(r'[\\/:*?"<>|]', '_', orig_name).replace('..', '_')
     filename = f'file_{int(time.time())}_{os.urandom(4).hex()}_{safe_name}'
     file_path = MEDIA_DIR / filename
@@ -205,7 +206,6 @@ def upload_media(file_path: str, to_user_id: str, token: str,
     if len(plaintext) > MAX_UPLOAD_SIZE:
         raise RuntimeError(f'文件过大 ({len(plaintext) / 1024 / 1024:.1f}MB)，上限 50MB')
 
-    import hashlib
     raw_size = len(plaintext)
     raw_md5 = hashlib.md5(plaintext).hexdigest()
     file_size = _aes_ecb_padded_size(raw_size)

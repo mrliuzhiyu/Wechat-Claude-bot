@@ -221,7 +221,7 @@ def _parse_message(msg: dict) -> dict | None:
 def send_message(token: str, to: str, text: str, context_token: str | None = None):
     """发送文字消息"""
     client_id = f'wcb-{int(time.time() * 1000)}-{os.urandom(4).hex()}'
-    _api_post('ilink/bot/sendmessage', {
+    resp = _api_post('ilink/bot/sendmessage', {
         'msg': {
             'from_user_id': '',
             'to_user_id': to,
@@ -232,6 +232,8 @@ def send_message(token: str, to: str, text: str, context_token: str | None = Non
             'context_token': context_token or '',
         },
     }, token)
+    if resp and resp.get('ret') and resp['ret'] != 0:
+        raise RuntimeError(f'发送失败: {resp.get("errmsg", resp.get("ret"))}')
 
 
 def send_media_message(token: str, to: str, media_item: dict,
@@ -244,7 +246,7 @@ def send_media_message(token: str, to: str, media_item: dict,
 
     for item in items:
         client_id = f'wcb-{int(time.time() * 1000)}-{os.urandom(4).hex()}'
-        _api_post('ilink/bot/sendmessage', {
+        resp = _api_post('ilink/bot/sendmessage', {
             'msg': {
                 'from_user_id': '',
                 'to_user_id': to,
@@ -255,6 +257,8 @@ def send_media_message(token: str, to: str, media_item: dict,
                 'context_token': context_token or '',
             },
         }, token)
+        if resp and resp.get('ret') and resp['ret'] != 0:
+            raise RuntimeError(f'发送失败: {resp.get("errmsg", resp.get("ret"))}')
 
 
 def send_typing(token: str, to: str, typing_ticket: str):

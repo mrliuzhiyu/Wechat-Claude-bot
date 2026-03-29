@@ -7,9 +7,9 @@
 import time
 import threading
 import logging
-import json
 
 from .base import ModelAdapter, ChatResult
+from core.config import MAX_CONCURRENT
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +58,9 @@ class DirectAPIAdapter(ModelAdapter):
         self._locks: dict[str, threading.Lock] = {}
         self._active_count = 0
         self._count_lock = threading.Lock()
-        self._max_concurrent = 5
+        self._max_concurrent = MAX_CONCURRENT
+        self._anthropic_client = None
+        self._openai_client = None
 
     @property
     def name(self) -> str:
@@ -70,6 +72,8 @@ class DirectAPIAdapter(ModelAdapter):
         self._api_key = api_key
         self._model = model or self.PROVIDERS.get(provider, {}).get('default_model', 'gpt-4o')
         self._api_base = api_base or self.PROVIDERS.get(provider, {}).get('api_base', '')
+        self._anthropic_client = None
+        self._openai_client = None
 
     def check_available(self) -> str | None:
         if not self._api_key:
@@ -126,10 +130,24 @@ class DirectAPIAdapter(ModelAdapter):
 
         return ChatResult(text=reply or '(无响应)')
 
+    def _get_anthropic_client(self):
+        import anthropic
+        if self._anthropic_client is None:
+            self._anthropic_client = anthropic.Anthropic(api_key=self._api_key)
+        return self._anthropic_client
+
+    def _get_openai_client(self):
+        import openai
+        if self._openai_client is None:
+            kwargs = {}
+            if self._api_base:
+                kwargs['base_url'] = self._api_base
+            self._openai_client = openai.OpenAI(api_key=self._api_key, **kwargs)
+        return self._openai_client
+
     def _call_anthropic(self, history: list, message: str,
                         model: str, system_prompt: str | None) -> str:
-        import anthropic
-        client = anthropic.Anthropic(api_key=self._api_key)
+        client = self._get_anthropic_client()
 
         messages = [{'role': m['role'], 'content': m['content']} for m in history]
         messages.append({'role': 'user', 'content': message})
@@ -139,17 +157,14 @@ class DirectAPIAdapter(ModelAdapter):
             kwargs['system'] = system_prompt
 
         resp = client.messages.create(**kwargs)
+        if not resp.content:
+            return ''
         return ''.join(block.text for block in resp.content if hasattr(block, 'text'))
 
     def _call_openai_compat(self, history: list, message: str,
                             model: str, system_prompt: str | None) -> str:
         """OpenAI 兼容 API（OpenAI / DeepSeek / 其他）"""
-        import openai
-
-        kwargs = {}
-        if self._api_base:
-            kwargs['base_url'] = self._api_base
-        client = openai.OpenAI(api_key=self._api_key, **kwargs)
+        client = self._get_openai_client()
 
         messages = []
         if system_prompt:
@@ -158,6 +173,8 @@ class DirectAPIAdapter(ModelAdapter):
         messages.append({'role': 'user', 'content': message})
 
         resp = client.chat.completions.create(model=model, messages=messages, max_tokens=4096)
+        if not resp.choices:
+            return ''
         return resp.choices[0].message.content or ''
 
     def clear_session(self, user_id: str):
