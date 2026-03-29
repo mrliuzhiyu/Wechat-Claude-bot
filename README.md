@@ -26,7 +26,7 @@
   微信发消息 → AI 操控你的电脑 → 结果发回微信
 </p>
 
-> **跟普通聊天机器人的区别？** CowAgent/QClaw 只能文字对话。本项目通过 Claude Code / Open Interpreter 让 AI **真正操作你的电脑**——读写文件、执行命令、修改代码、运行测试。Python 桌面客户端，支持多 AI 引擎，微信原生设计风格。
+> **跟普通聊天机器人的区别？** CowAgent/QClaw 只能文字对话。本项目通过 Claude Code / Open Interpreter 让 AI **真正操作你的电脑**——读写文件、执行命令、修改代码、运行测试。PyQt6 桌面客户端，支持多 AI 引擎切换，极简高级设计风格。
 
 ---
 
@@ -54,27 +54,35 @@
 - **退出微信也能用** — 基于服务端长轮询，关闭微信 App 后消息仍会排队，重新打开即可收到回复，Bot 7×24 不间断运行
 - **完整电脑操作能力** — Claude Code 能真正操作你的电脑：读写任意文件、执行任意终端命令、搜索代码、安装依赖、Git 操作等，不只是聊天
 - **直接操作真实项目** — Claude Code 运行在你的本机项目目录中，直接修改真实代码文件，改完即生效
+- **多 AI 引擎** — 三个适配器可选：Claude Code CLI（完整电脑操控）、Open Interpreter（多模型支持）、纯 API（Anthropic/OpenAI/DeepSeek 对话）
 
 ### 交互体验
 
 - **实时进度反馈** — Claude Code 读文件、写代码、执行命令时，实时推送进度到微信（如 `📖 正在读取文件: src/app.js`）
 - **思考状态提示** — 处理前 3 秒内推送"🧠 正在思考..."，配合 Typing 状态让用户知道 Bot 在工作
 - **文件自动发回** — Claude Code 读取、创建的图片/PDF/文档/视频会**自动发送到微信**，无需手动操作
-- **图片/文件/视频接收** — 接收微信发来的图片、文件、视频，自动下载并交给 Claude Code 分析（PDF 总结、CSV 分析数据、代码审查等）
+- **图片/文件/视频接收** — 接收微信发来的图片、文件、视频，自动下载并交给 AI 分析（PDF 总结、CSV 分析数据、代码审查等）
 - **智能消息拆分** — 长回复自动按代码块边界智能拆分，分片标注序号
 - **Markdown 转换** — 自动将 Claude 的 Markdown 输出转为微信友好的纯文本格式
 - **语音消息支持** — 支持微信语音转文字，自动标注语音来源提高容错
 - **斜杠命令** — `/new` 重置对话、`/model` 切换模型、`/cwd` 切换项目目录、`/send` 发送文件、`/status` 查看状态
+
+### 桌面客户端
+
+- **PyQt6 原生 GUI** — 极简高级设计风格（受 Linear/Raycast/Apple 启发），不是终端工具
+- **实时操作视图** — 看到 AI 正在做什么：读了哪些文件、执行了什么命令、写了哪些代码
+- **引擎切换** — 在 GUI 设置中切换 AI 引擎和模型，无需重启
+- **系统托盘** — 最小化到托盘后台运行，双击恢复
 
 ### 稳定性与安全
 
 - **多用户会话隔离** — 每个微信用户独立 session，对话上下文连续，互不干扰
 - **并发控制** — 最多同时处理 3 个任务，超出提示"请稍等"
 - **会话永久保持** — 会话不设过期时间，上下文持续保持（和 VS Code 中使用 Claude Code 体验一致）
-- **会话持久化** — sessionId 保存到磁盘，PM2 重启/崩溃后自动恢复，不丢上下文
+- **会话持久化** — sessionId 保存到磁盘，重启后自动恢复，不丢上下文
 - **自动重连** — Token 过期自动重新扫码登录，Token 持久化免重复扫码
 - **超时保护** — 5 分钟无响应强制结束，返回已有的部分结果
-- **优雅退出** — 支持 Ctrl+C 安全退出，自动清理所有子进程
+- **优雅退出** — 关闭窗口最小化到托盘，退出时自动清理所有子进程
 - **本机运行** — 代码和数据不经过任何第三方服务器，凭据文件权限仅 owner 可读写
 
 ---
@@ -89,11 +97,10 @@
 
 | 对比维度 | OpenClaw | 本项目 (WeChat Claude Code Bot) |
 |---------|----------|-------------------------------|
-| **定位** | 通用 AI 智能体框架，支持多种模型和插件 | 专注一件事：微信连 Claude Code CLI |
-| **安装** | 框架本身 + API Key + 模型配置 + 插件系统 + 依赖链 | **3 步**：`git clone` → `npm install` → `npm start` |
-| **依赖** | 框架庞大，依赖众多，安装易出问题 | **仅 2 个依赖**（dotenv + qrcode-terminal） |
-| **维护** | 框架更新频繁，需跟进升级，版本兼容容易踩坑 | 几乎不需要维护，代码简洁透明 |
-| **代码量** | 完整框架，数千文件 | **4 个核心文件**，总计 ~1000 行 |
+| **定位** | 通用 AI 智能体框架，支持多种模型和插件 | 专注一件事：微信连本机 AI 引擎 |
+| **安装** | 框架本身 + API Key + 模型配置 + 插件系统 + 依赖链 | **3 步**：`git clone` → `pip install` → `python main.py` |
+| **依赖** | 框架庞大，依赖众多，安装易出问题 | **5 个核心依赖**（PyQt6 / requests / cryptography / qrcode / python-dotenv） |
+| **维护** | 框架更新频繁，需跟进升级，版本兼容容易踩坑 | 代码简洁透明，核心逻辑约 3600 行 |
 
 ### Token 成本
 
@@ -103,7 +110,7 @@
 |-|----------|--------|
 | **计费方式** | 每次对话调用 Claude API，按 Token 计费 | 使用本机 Claude Code CLI，走订阅额度 |
 | **成本特点** | 长对话、代码分析、多轮交互 Token 消耗大，费用不可控 | **零额外 Token 费用**，已有 Claude Code 订阅即可 |
-| **API Key** | 必须配置 | 不需要 |
+| **API Key** | 必须配置 | Claude Code 引擎不需要（其他引擎可选） |
 
 ### Claude Code 的独特能力
 
@@ -122,7 +129,7 @@
 
 > **OpenClaw** = 功能齐全的 AI 框架，适合需要自定义 AI 能力的通用场景，但重、贵、装起来费劲
 >
-> **本项目** = 4 个文件、零额外成本、专注做一件事：让你在微信里远程操控 Claude Code
+> **本项目** = 轻量 Python 桌面客户端、零额外成本、专注做一件事：让你在微信里远程操控 AI
 
 ### 怎么选
 
@@ -137,37 +144,35 @@
 本项目基于微信官方 **iLink Bot** (ClawBot) 协议，通过微信扫码建立连接：
 
 <p align="center">
-  <img src="docs/images/wechat-clawbot.jpg" alt="微信 ClawBot 连接方式" width="260" />
+  <img src="docs/images/wechat-clawbot.jpg" alt="微信 ClawBot 连接方式" width="300" />
 </p>
 
-<p align="center">
-  <img src="docs/images/wechat-usage.jpg" alt="实际使用效果" width="260" />
-</p>
-
-> 左图为微信官方 ClawBot 插件页面，右图为实际使用效果。启动 Bot 后终端显示二维码，用微信扫码即可连接。连接后即使退出微信，Bot 仍持续运行并处理消息，重新打开微信即可看到回复。
+> 启动客户端后 GUI 显示二维码，用微信扫码即可连接。连接后即使退出微信，Bot 仍持续运行并处理消息，重新打开微信即可看到回复。
 
 ---
 
 ## 工作原理
 
 ```
-┌──────────┐         ┌──────────────────┐         ┌───────────┐
-│  微信用户  │ ──消息──▶│  iLink Bot API   │ ──轮询──▶│  本机 Bot  │
-│  (手机端)  │ ◀─回复── │ (weixin.qq.com)  │ ◀─发送── │  (Node.js) │
-└──────────┘         └──────────────────┘         └─────┬─────┘
-                                                        │
-                                                        │ 调用 CLI
-                                                        ▼
-                                                  ┌───────────┐
-                                                  │ Claude Code│
-                                                  │   (本机)    │
-                                                  └───────────┘
+┌──────────┐         ┌──────────────────┐         ┌───────────────┐
+│  微信用户  │ ──消息──▶│  iLink Bot API   │ ──轮询──▶│  本机 Bot      │
+│  (手机端)  │ ◀─回复── │ (weixin.qq.com)  │ ◀─发送── │ (PyQt6 客户端) │
+└──────────┘         └──────────────────┘         └──────┬────────┘
+                                                         │
+                                                         │ 调用适配器
+                                                         ▼
+                                              ┌─────────────────────┐
+                                              │  Claude Code CLI    │
+                                              │  Open Interpreter   │
+                                              │  Direct API         │
+                                              │  (三选一)            │
+                                              └─────────────────────┘
 ```
 
 1. Bot 通过微信 iLink Bot API（长轮询）接收用户消息
-2. 将消息转发给本机 Claude Code CLI（stream-json 模式）
-3. 实时解析 Claude Code 的工具调用（读文件、写代码、执行命令等），推送进度到微信
-4. Claude Code 完成后，将最终结果格式化发送回微信
+2. 将消息转发给当前选择的 AI 引擎（默认 Claude Code CLI，stream-json 模式）
+3. 实时解析 AI 的工具调用（读文件、写代码、执行命令等），推送进度到微信
+4. AI 完成后，将最终结果格式化发送回微信，创建的文件自动发回
 
 ---
 
@@ -175,8 +180,8 @@
 
 ### 前置条件
 
-- **Node.js** >= 20
-- **Claude Code CLI** 已全局安装（`npm install -g @anthropic-ai/claude-code`）
+- **Python** >= 3.11
+- **Claude Code CLI** 已安装（`npm install -g @anthropic-ai/claude-code`）— 使用 Claude Code 引擎时需要
 - **微信账号**
 
 ### 安装步骤
@@ -187,22 +192,22 @@ git clone https://github.com/mrliuzhiyu/Wechat-Claude-bot.git
 cd Wechat-Claude-bot
 
 # 2. 安装依赖
-npm install
+pip install -r requirements.txt
 
 # 3. (可选) 配置工作目录
 cp .env.example .env
 # 编辑 .env 设置 CLAUDE_CWD 为你的项目路径
 
-# 4. 启动 Bot
-npm start
+# 4. 启动客户端
+python main.py
 ```
 
 ### 首次连接
 
-1. 启动后终端会显示一个二维码
-2. 打开微信 → 扫描二维码
-3. 在微信中确认连接
-4. 看到 `✅ 连接成功` 后即可使用
+1. 启动后 GUI 会进行环境检测（检查 Claude CLI、网络连接等）
+2. 检测通过后显示二维码
+3. 打开微信 → 扫描二维码 → 确认连接
+4. 进入操作视图后即可使用
 5. 在微信中直接发消息给 Bot 即可
 
 > 首次登录后 Token 会自动保存，下次启动无需重复扫码（除非 Token 过期）。
@@ -211,20 +216,24 @@ npm start
 
 ## 配置说明
 
+### 环境变量
+
 通过 `.env` 文件或环境变量配置：
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CLAUDE_CWD` | Claude Code 的默认工作目录 | 当前目录 (`process.cwd()`) |
+| `CLAUDE_CWD` | Claude Code 的默认工作目录 | 当前工作目录 |
 
 > 每个用户可通过 `/cwd` 命令独立切换工作目录，不影响其他用户。默认模型为 Sonnet。
 
-**示例 `.env` 文件：**
+### GUI 设置
 
-```bash
-# 指定 Claude Code 默认操作的项目目录
-CLAUDE_CWD=/home/user/my-project
-```
+在客户端设置页面可以：
+- 切换 AI 引擎（Claude Code / Open Interpreter / Direct API）
+- 选择模型（Sonnet / Opus / Haiku）
+- 配置 API Key（Open Interpreter 和 Direct API 引擎需要）
+- 修改工作目录
+- 清除用户会话
 
 ---
 
@@ -345,7 +354,7 @@ Bot: [显示日志...]
 | `/send <路径> \| 说明` | 带说明文字发送 |
 | `/status` | 查看 Bot 状态（版本、模型、目录、运行时间） |
 
-> 除斜杠命令外，所有消息都会发送给 Claude Code 处理。Claude 读取或创建的媒体文件会自动发送到微信。
+> 除斜杠命令外，所有消息都会发送给 AI 引擎处理。Claude Code 读取或创建的媒体文件会自动发送到微信。
 
 ---
 
@@ -353,41 +362,33 @@ Bot: [显示日志...]
 
 ```
 Wechat-Claude-bot/
-├── index.js          # Node.js 主入口：消息路由、斜杠命令、Markdown 转换
-├── bot-core.js       # Bot 核心逻辑：消息处理、会话管理、进度回调
-├── weixin-api.js     # 微信 iLink Bot API 封装：登录、收发消息、typing
-├── claude-code.js    # Claude Code CLI 交互层：会话管理、stream 解析
-├── media.js          # 媒体收发：CDN 上传下载、AES-128-ECB 加解密
-├── gui-server.js     # Web GUI 后端服务
-├── start-gui.js      # Web GUI 启动脚本
-├── gui/              # Web GUI 前端
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
-├── main.py           # Python 桌面客户端入口
-├── ui/               # PyQt6 桌面客户端 UI
-│   ├── main_window.py
-│   └── theme.py
-├── core/             # Python 核心模块
-│   ├── bot_engine.py
-│   ├── config.py
-│   ├── media.py
-│   └── weixin_api.py
-├── adapters/         # Python 适配器层
-│   ├── base.py
-│   └── claude_code.py
-├── requirements.txt  # Python 依赖
-├── package.json      # Node.js 依赖
-├── .env.example      # 环境变量示例
-├── DESIGN.md         # 设计系统文档
-├── docs/             # 文档资源
-│   ├── images/       # 图片资源
-│   └── i18n/         # 多语言翻译
-└── .state/           # (运行时生成)
-    ├── account.json  # 微信登录凭据
-    ├── sessions.json # 用户会话映射（持久化）
-    ├── media/        # 接收的媒体文件
-    └── outbox/       # 待发送文件（发件箱）
+├── main.py              # PyQt6 应用入口
+├── core/                # 核心逻辑
+│   ├── config.py        # 全局配置（路径、常量、模型定义）
+│   ├── weixin_api.py    # 微信 iLink Bot API 封装
+│   ├── media.py         # 媒体收发（CDN + AES-128-ECB 加解密）
+│   └── bot_engine.py    # Bot 引擎（消息路由、会话管理、并发控制）
+├── adapters/            # AI 模型适配器
+│   ├── base.py          # 抽象基类 ModelAdapter
+│   ├── claude_code.py   # Claude Code CLI 适配器
+│   ├── open_interpreter.py  # Open Interpreter 适配器
+│   ├── direct_api.py    # 纯 API 适配器（Anthropic/OpenAI/DeepSeek）
+│   └── registry.py      # 适配器注册中心（工厂 + 引擎检测）
+├── ui/                  # PyQt6 界面
+│   ├── main_window.py   # 主窗口（5 视图 + 自定义组件）
+│   └── theme.py         # 极简高级主题（颜色令牌 + QSS）
+├── requirements.txt     # Python 依赖
+├── .env.example         # 环境变量示例
+├── DESIGN.md            # 设计系统文档
+├── docs/                # 文档资源
+│   ├── images/          # 截图和二维码
+│   └── i18n/            # 多语言 README（9 种语言）
+└── .state/              # (运行时生成)
+    ├── account.json     # 微信登录凭据
+    ├── engine-config.json  # 引擎选择 + API Key
+    ├── sessions.json    # 用户会话映射（持久化）
+    ├── media/           # 接收的媒体文件
+    └── outbox/          # 待发送文件（发件箱）
 ```
 
 ---
@@ -396,17 +397,17 @@ Wechat-Claude-bot/
 
 ### Q: 启动时提示"未检测到 claude 命令"
 
-确保已全局安装 Claude Code CLI：
+确保已安装 Claude Code CLI：
 
 ```bash
 npm install -g @anthropic-ai/claude-code
 ```
 
-并确认 `claude --version` 能正常输出。
+并确认 `claude --version` 能正常输出。如果不使用 Claude Code 引擎，可以在设置中切换到 Open Interpreter 或 Direct API。
 
-### Q: 二维码显示异常
+### Q: 二维码显示不出来
 
-终端如果不支持 Unicode 字符，二维码可能无法正常显示。启动日志中会打印二维码的 URL，可以在浏览器中打开扫码。
+检查 GUI 窗口是否正常启动。启动日志中也会打印相关信息。确保网络可以访问 `ilinkai.weixin.qq.com`。
 
 ### Q: Token 过期了怎么办？
 
@@ -424,18 +425,26 @@ Bot 会自动检测 Token 过期并重新显示二维码，无需手动操作。
 
 完整支持。收发双向均可：
 
-- **接收**：用户在微信发图片/文件/视频 → 自动下载到本机 → Claude Code 智能分析（PDF 总结、CSV 分析数据、代码审查等）
-- **自动发回**：Claude Code 读取或创建的图片/PDF/文档/视频会**自动发送到微信**，无需手动操作
+- **接收**：用户在微信发图片/文件/视频 → 自动下载到本机 → AI 智能分析（PDF 总结、CSV 分析数据、代码审查等）
+- **自动发回**：AI 读取或创建的图片/PDF/文档/视频会**自动发送到微信**，无需手动操作
 - **手动发送**：用 `/send <文件路径>` 发送任意文件（上限 50MB），支持 `/send 路径 | 说明` 带描述
 - **语音**：支持微信语音转文字，自动标注来源提高容错
 
 ### Q: 会话上下文能保持多久？
 
-会话**永不过期**。每个用户的对话上下文通过 Claude Code 的 session 机制持久保持，和在 VS Code 中使用 Claude Code 效果一致。PM2 重启后会话也不丢失（sessionId 持久化到磁盘）。发送 `/new` 可手动重置。
+会话**永不过期**。每个用户的对话上下文通过 Claude Code 的 session 机制持久保持，和在 VS Code 中使用 Claude Code 效果一致。重启后会话也不丢失（sessionId 持久化到磁盘）。发送 `/new` 可手动重置。
 
 ### Q: 能切换项目吗？
 
 可以。发送 `/cwd D:\projects\my-app` 切换工作目录。每个用户的工作目录独立，切换后对话自动重置以获取新项目上下文。
+
+### Q: 三个 AI 引擎有什么区别？
+
+| 引擎 | 能力 | 适合场景 |
+|------|------|----------|
+| **Claude Code CLI** | 完整电脑操控（读写文件、执行命令、搜索代码） | 远程开发、代码修改、运维 |
+| **Open Interpreter** | 多模型支持（GPT-4/Claude/Gemini/Ollama），可执行代码 | 想用其他模型、本地模型 |
+| **Direct API** | 纯对话（Anthropic/OpenAI/DeepSeek），无电脑操控 | 只需要聊天、问答 |
 
 ### Q: 安全性如何？
 
